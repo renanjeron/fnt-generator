@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.20)
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW) # Start allowing option() to override cache variables
 set(CMAKE_POLICY_VERSION_MINIMUM "3.5")
 
-project(FntGenerator VERSION 1.0.0 LANGUAGES CXX)
+project(FntGenerator VERSION 1.0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -133,8 +133,8 @@ if(APPLE)
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_BUNDLE_NAME "Fnt Generator"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.renanjeron.fntgenerator"
-        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.0"
+        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.1"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.1"
         MACOSX_BUNDLE_COPYRIGHT "Copyright © 2026"
     )
 endif()
