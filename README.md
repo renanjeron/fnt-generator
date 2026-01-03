@@ -101,6 +101,7 @@ This project relies on these amazing open-source libraries:
 
 - **[FreeType](https://freetype.org/)**: Robust font rendering engine.
 - **[Dear ImGui](https://github.com/ocornut/imgui)**: Bloat-free Immediate Mode GUI for C++.
+- **[ImGui Gradient](https://github.com/Coollab-Art/imgui_gradient)**: Gradient editor for Dear ImGui.
 - **[GLFW](https://www.glfw.org/)**: Open Source, multi-platform library for OpenGL, OpenGL ES, Vulkan, window and input.
 - **[nlohmann/json](https://github.com/nlohmann/json)**: JSON for Modern C++.
 - **[stb_image_write](https://github.com/nothings/stb)**: Single-file public domain image writer.
