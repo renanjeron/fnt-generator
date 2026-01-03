@@ -1,0 +1,71 @@
+#pragma once
+#include <vector>
+#include <string>
+#include <cstdint>
+
+struct UnicodeBlock {
+    std::string name;
+    uint32_t start;
+    uint32_t end;
+    bool enabled;
+};
+
+// Common Unicode blocks for font atlas generation
+static const std::vector<UnicodeBlock> UNICODE_BLOCKS = {
+    // Latin
+    {"Basic Latin", 0x0000, 0x007F, true},           // ASCII
+    {"Latin-1 Supplement", 0x0080, 0x00FF, false},
+    {"Latin Extended-A", 0x0100, 0x017F, false},
+    {"Latin Extended-B", 0x0180, 0x024F, false},
+    
+    // Spacing & Modifiers
+    {"Spacing Modifier Letters", 0x02B0, 0x02FF, false},
+    {"Combining Diacritical Marks", 0x0300, 0x036F, false},
+    
+    // Greek & Cyrillic & Thai
+    {"Greek and Coptic", 0x0370, 0x03FF, false},
+    {"Cyrillic", 0x0400, 0x04FF, false},
+    {"Cyrillic Supplement", 0x0500, 0x052F, false},
+    {"Thai", 0x0E00, 0x0E7F, false},
+    
+    // Vietnamese & Latin Extensions
+    {"Latin Extended Additional", 0x1E00, 0x1EFF, false},
+    
+    // Punctuation & Symbols
+    {"General Punctuation", 0x2000, 0x206F, false},
+    {"Superscripts and Subscripts", 0x2070, 0x209F, false},
+    {"Currency Symbols", 0x20A0, 0x20CF, false},
+    {"Letterlike Symbols", 0x2100, 0x214F, false},
+    {"Number Forms", 0x2150, 0x218F, false},
+    {"Arrows", 0x2190, 0x21FF, false},
+    
+    // Mathematical
+    {"Mathematical Operators", 0x2200, 0x22FF, false},
+    {"Miscellaneous Technical", 0x2300, 0x23FF, false},
+    {"Box Drawing", 0x2500, 0x257F, false},
+    {"Block Elements", 0x2580, 0x259F, false},
+    {"Geometric Shapes", 0x25A0, 0x25FF, false},
+    {"Miscellaneous Symbols", 0x2600, 0x26FF, false},
+    
+    // CJK (East Asian)
+    {"CJK Symbols and Punctuation", 0x3000, 0x303F, false},
+    {"Hiragana", 0x3040, 0x309F, false},
+    {"Katakana", 0x30A0, 0x30FF, false},
+    {"CJK Unified Ideographs Ext. A", 0x3400, 0x4DBF, false},
+    {"CJK Unified Ideographs", 0x4E00, 0x9FFF, false},
+};
+
+// Helper to generate charset from selected blocks
+inline std::vector<uint32_t> GenerateCharsetFromBlocks(const std::vector<UnicodeBlock>& blocks) {
+    std::vector<uint32_t> charset;
+    
+    for (const auto& block : blocks) {
+        if (block.enabled) {
+            for (uint32_t code = block.start; code <= block.end; code++) {
+                charset.push_back(code);
+            }
+        }
+    }
+    
+    return charset;
+}
