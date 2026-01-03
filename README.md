@@ -1,6 +1,6 @@
 # Fnt Generator
 
-A cross-platform (Windows, macOS, Linux) tool for generating bitmap font atlases. Project created out of personal necessity to generate bitmap fonts for use with the **Starling Framework** and **FeathersUI**. It exports industry-standard `.fnt` (XML) and `.png` files compatible with these engines and others that support the BMFont format.
+A cross-platform (Windows, macOS, Linux) tool for generating bitmap font atlases. Project created out of personal necessity to generate bitmap fonts for use with the **Starling Framework** and **FeathersUI**. It exports industry-standard `.fnt` (XML, Binary, Text) and `.png` files compatible with these engines and others that support the BMFont format.
 
 ![Fnt Generator Preview](images/preview.png)
 
