@@ -182,6 +182,83 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
     // 4. Pack
     int atlasWidth = settings.atlasWidth;
     int atlasHeight = settings.atlasHeight;
+
+    // Handle Auto-size (0 means Auto)
+    if (atlasWidth <= 0 || atlasHeight <= 0) {
+        if (atlasWidth <= 0 && atlasHeight <= 0) {
+            // Both auto: Find smallest square POT
+            int currentS = 128;
+            bool fits = false;
+            while (!fits && currentS <= 4096) {
+                int vX = settings.padding;
+                int vY = settings.padding;
+                int vRowH = 0;
+                fits = true;
+                for (const auto& rc : chars) {
+                    if (vX + rc.packingWidth + settings.padding > currentS) {
+                        vX = settings.padding;
+                        vY += vRowH + settings.padding;
+                        vRowH = 0;
+                        if (vY + rc.packingHeight + settings.padding > currentS) {
+                            fits = false;
+                            break;
+                        }
+                    }
+                    if (rc.packingHeight > vRowH) vRowH = rc.packingHeight;
+                    vX += rc.packingWidth + settings.padding;
+                    if (vX > currentS || vY + vRowH + settings.padding > currentS) {
+                        fits = false;
+                        break;
+                    }
+                }
+                if (!fits) currentS *= 2;
+            }
+            atlasWidth = currentS;
+            atlasHeight = currentS;
+        } else if (atlasHeight <= 0) {
+            // Only Height is auto: Find smallest POT height for fixed width
+            int vX = settings.padding;
+            int vY = settings.padding;
+            int vRowH = 0;
+            for (const auto& rc : chars) {
+                if (vX + rc.packingWidth + settings.padding > atlasWidth) {
+                    vX = settings.padding;
+                    vY += vRowH + settings.padding;
+                    vRowH = 0;
+                }
+                if (rc.packingHeight > vRowH) vRowH = rc.packingHeight;
+                vX += rc.packingWidth + settings.padding;
+            }
+            int neededH = vY + vRowH + settings.padding;
+            atlasHeight = 128;
+            while (atlasHeight < neededH && atlasHeight < 4096) atlasHeight *= 2;
+        } else if (atlasWidth <= 0) {
+            // Only Width is auto: Find smallest POT width for fixed height
+            int currentW = 128;
+            bool fits = false;
+            while (!fits && currentW <= 4096) {
+                int vX = settings.padding;
+                int vY = settings.padding;
+                int vRowH = 0;
+                fits = true;
+                for (const auto& rc : chars) {
+                    if (vX + rc.packingWidth + settings.padding > currentW) {
+                        vX = settings.padding;
+                        vY += vRowH + settings.padding;
+                        vRowH = 0;
+                    }
+                    if (vY + rc.packingHeight + settings.padding > atlasHeight) {
+                        fits = false;
+                        break;
+                    }
+                    if (rc.packingHeight > vRowH) vRowH = rc.packingHeight;
+                    vX += rc.packingWidth + settings.padding;
+                }
+                if (!fits) currentW *= 2;
+            }
+            atlasWidth = currentW;
+        }
+    }
     
     // Virtual Packing: We might need a larger buffer to show out-of-bounds glyphs
     // But we limit it to prevent crashes.

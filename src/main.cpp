@@ -27,8 +27,9 @@ static char g_InputText[1024] = "Hello Everyone";
 static int g_FontSize = 72;
 static int g_Padding = 5;
 
-// New: Atlas Size
-static int g_AtlasSize = 1024;
+// Atlas Size
+static int g_AtlasWidth = 1024;
+static int g_AtlasHeight = 1024;
 
 // Fill
 // Fill
@@ -359,7 +360,8 @@ void SaveStyle(const std::string& path) {
     out << "{\n";
     out << "  \"fontSize\": " << g_FontSize << ",\n";
     out << "  \"padding\": " << g_Padding << ",\n";
-    out << "  \"atlasSize\": " << g_AtlasSize << ",\n";
+    out << "  \"atlasWidth\": " << g_AtlasWidth << ",\n";
+    out << "  \"atlasHeight\": " << g_AtlasHeight << ",\n";
     out << "  \"fillColor\": [" << g_FillColor[0] << ", " << g_FillColor[1] << ", " << g_FillColor[2] << ", " << g_FillColor[3] << "],\n";
     
     out << "  \"enableGradient\": " << (g_EnableGradient ? "true" : "false") << ",\n";
@@ -614,7 +616,8 @@ void LoadStyle(const std::string& path) {
     
     g_FontSize = ParseIntValue(c, "fontSize", g_FontSize);
     g_Padding = ParseIntValue(c, "padding", g_Padding);
-    g_AtlasSize = ParseIntValue(c, "atlasSize", g_AtlasSize);
+    g_AtlasWidth = ParseIntValue(c, "atlasWidth", ParseIntValue(c, "atlasSize", 1024));
+    g_AtlasHeight = ParseIntValue(c, "atlasHeight", ParseIntValue(c, "atlasSize", 1024));
     
     ParseColor4(c, "fillColor", g_FillColor);
     g_EnableGradient = ParseBoolValue(c, "enableGradient", g_EnableGradient);
@@ -770,8 +773,8 @@ AtlasSettings ConstructSettings() {
     AtlasSettings settings;
     settings.fontSize = g_FontSize;
     settings.padding = g_Padding;
-    settings.atlasWidth = g_AtlasSize;
-    settings.atlasHeight = g_AtlasSize;
+    settings.atlasWidth = g_AtlasWidth;
+    settings.atlasHeight = g_AtlasHeight;
     settings.useSuperSampling = false;
     settings.hintingMode = g_HintingMode;
     
@@ -1513,11 +1516,29 @@ int main(int, char**) {
 
             // Preview Info & Atlas Settings
             ImGui::Separator();
-            ImGui::Text("Atlas Settings");
-            const char* atlasSizes[] = { "512", "1024", "2048", "4096" };
-            static int currentSizeIdx = 1; // 1024 default
-            if (ImGui::Combo("Atlas Size", &currentSizeIdx, atlasSizes, IM_ARRAYSIZE(atlasSizes))) {
-                g_AtlasSize = atoi(atlasSizes[currentSizeIdx]);
+            ImGui::Text("Atlas Size");
+            const char* atlasSizes[] = { "Auto", "256", "512", "1024", "2048", "4096", "8192" };
+            
+            auto GetSizeIdx = [&](int size) {
+                if (size <= 0) return 0;
+                for (int i = 1; i < IM_ARRAYSIZE(atlasSizes); i++) {
+                    if (atoi(atlasSizes[i]) == size) return i;
+                }
+                return 3; // Default 1024
+            };
+
+            int curWIdx = GetSizeIdx(g_AtlasWidth);
+            int curHIdx = GetSizeIdx(g_AtlasHeight);
+
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::Combo("W##Atlas", &curWIdx, atlasSizes, IM_ARRAYSIZE(atlasSizes))) {
+                g_AtlasWidth = (curWIdx == 0) ? 0 : atoi(atlasSizes[curWIdx]);
+                UpdatePreview(g_InputText);
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::Combo("H##Atlas", &curHIdx, atlasSizes, IM_ARRAYSIZE(atlasSizes))) {
+                g_AtlasHeight = (curHIdx == 0) ? 0 : atoi(atlasSizes[curHIdx]);
                 UpdatePreview(g_InputText);
             }
 
