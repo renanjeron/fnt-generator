@@ -102,22 +102,29 @@ list(APPEND IMGUI_GRADIENT_SOURCES
 
 # PlatformUtils
 if(WIN32)
-    list(APPEND PLATFORM_SOURCES src/Utils/PlatformUtils_Win32.cpp)
+    list(APPEND PLATFORM_SOURCES src/Utils/PlatformUtils_Win32.cpp res/icon.rc)
 elseif(APPLE)
     list(APPEND PLATFORM_SOURCES src/Utils/PlatformUtils_macOS.mm)
+    set(MACOS_ICON res/icon.icns)
+    set_source_files_properties(${MACOS_ICON} PROPERTIES MACOSX_BUNDLE_RESOURCE TRUE)
 else()
     list(APPEND PLATFORM_SOURCES src/Utils/PlatformUtils_Linux.cpp)
 endif()
 
-add_executable(FntGenerator WIN32
+add_executable(FntGenerator WIN32 MACOSX_BUNDLE
     src/main.cpp
     src/Font/FontManager.cpp
     src/Atlas/TextureGenerator.cpp
     src/Utils/Exporter.cpp
     src/Utils/BitmapUtils.cpp
+    src/Utils/StringUtils.cpp
+    src/Utils/JsonUtils.cpp
+    src/Utils/StyleUtils.cpp
+    src/Utils/UIUtils.cpp
     ${IMGUI_SOURCES}
     ${PLATFORM_SOURCES}
     ${IMGUI_GRADIENT_SOURCES}
+    ${MACOS_ICON}
 )
 
 # --- Includes & Linking ---
@@ -165,9 +172,10 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_VERSION "1.0.4"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.4"
         MACOSX_BUNDLE_COPYRIGHT "Copyright © 2026"
+        MACOSX_BUNDLE_ICON_FILE "icon.icns"
     )
 endif()
 
 
-# Copy assets if needed (placeholder)
-# file(COPY assets DESTINATION ${CMAKE_BINARY_DIR})
+# Copy resources to build directory
+file(COPY ${CMAKE_SOURCE_DIR}/res DESTINATION ${CMAKE_CURRENT_BINARY_DIR})

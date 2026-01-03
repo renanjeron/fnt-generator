@@ -18,6 +18,12 @@
 #include "Atlas/TextureGenerator.h"
 #include "Utils/Exporter.h"
 #include "Utils/UnicodeBlocks.h"
+#include "Utils/StringUtils.h"
+#include "Utils/JsonUtils.h"
+#include "Utils/StyleUtils.h"
+#include "Utils/UIUtils.h"
+
+
 
 // --- State Variables ---
 static std::vector<Utils::FontInfo> g_SystemFonts;
@@ -28,8 +34,8 @@ static int g_FontSize = 72;
 static int g_Padding = 5;
 
 // Atlas Size
-static int g_AtlasWidth = 1024;
-static int g_AtlasHeight = 1024;
+static int g_AtlasWidth = 0;
+static int g_AtlasHeight = 0;
 
 // Fill
 // Fill
@@ -76,8 +82,8 @@ static float g_PreviewBgColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f }; // Default Transp
 static char g_ExportFilename[128] = "my_font";
 static int g_ExportFormat = 0; // 0=XML, 1=Text, 2=Binary
 static bool g_UseExtendedCharset = false;
-static bool g_UseCustomGlyphs = false;
-static char g_CustomGlyphsText[4096] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!№;%:?*()_+-=.,/|\"'@#$^&{}[]";
+static bool g_UseCustomGlyphs = true; // Always true now
+static std::string g_CustomGlyphsText = "";
 static std::vector<UnicodeBlock> g_UnicodeBlocks = UNICODE_BLOCKS; // Mutable copy
 static GLuint g_CheckerTexture = 0;
 // Atlas Interaction
@@ -101,257 +107,21 @@ static int g_GlobalYOffset = 0;
 
 // Favorite fonts system
 static std::set<std::string> g_FavoriteFonts;
-std::string GetFavoritesPath() { return Utils::GetConfigDir() + "/font_favorites.txt"; }
-
-// Load favorites from file
-void LoadFavorites() {
-    std::ifstream file(GetFavoritesPath());
-    if (file.is_open()) {
-        std::set<std::string> temp;
-        std::string line;
-        while (std::getline(file, line)) {
-            if (!line.empty()) temp.insert(line);
-        }
-        if (!temp.empty()) g_FavoriteFonts = temp;
-        file.close();
-    }
-}
-
-// Save favorites to file
-void SaveFavorites() {
-    std::string path = GetFavoritesPath();
-    std::string tmpPath = path + ".tmp";
-    std::ofstream file(tmpPath);
-    if (file.is_open()) {
-        for (const auto& fontPath : g_FavoriteFonts) {
-            file << fontPath << "\n";
-        }
-        file.close();
-        
-        // Atomic-like swap
-        std::remove(path.c_str());
-        std::rename(tmpPath.c_str(), path.c_str());
-    }
-}
-
-// --- Recent Styles ---
+// Recent Styles
 static std::vector<std::string> g_RecentStyles;
-std::string GetRecentsPath() { return Utils::GetConfigDir() + "/style_recents.txt"; }
 static bool g_ShowRecentError = false;
 static std::string g_RecentNotFoundPath = "";
 
-void LoadRecentStyles() {
-    std::ifstream in(GetRecentsPath());
-    if (in.is_open()) {
-        std::vector<std::string> temp;
-        std::string line;
-        while(std::getline(in, line)) {
-            if(!line.empty()) temp.push_back(line);
-        }
-        if (!temp.empty()) g_RecentStyles = temp;
-        in.close();
-    }
-}
 
-void SaveRecentStyles() {
-    std::string path = GetRecentsPath();
-    std::string tmpPath = path + ".tmp";
-    std::ofstream out(tmpPath);
-    if (out.is_open()) {
-        for(const auto& s : g_RecentStyles) out << s << "\n";
-        out.close();
-
-        // Atomic-like swap
-        std::remove(path.c_str());
-        std::rename(tmpPath.c_str(), path.c_str());
-    }
-}
-
-// --- Custom Glyphs Presets ---
-std::string GetCustomGlyphsDir() {
-    std::string dir = Utils::GetConfigDir() + "/customglyphs";
-    if (!std::filesystem::exists(dir)) std::filesystem::create_directories(dir);
-    return dir;
-}
-
-std::vector<std::string> GetCustomGlyphsPresets() {
-    std::vector<std::string> presets;
-    std::string dir = GetCustomGlyphsDir();
-    if (!std::filesystem::exists(dir)) return presets;
-    
-    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".txt") {
-            presets.push_back(entry.path().stem().string());
-        }
-    }
-    return presets;
-}
-
-void SaveCustomGlyphsPreset(const std::string& name, const std::string& content) {
-    if (name.empty()) return;
-    std::string path = GetCustomGlyphsDir() + "/" + name + ".txt";
-    std::ofstream out(path);
-    if (out.is_open()) {
-        out << content;
-    }
-}
-
-void DeleteCustomGlyphsPreset(const std::string& name) {
-    if (name.empty()) return;
-    std::string path = GetCustomGlyphsDir() + "/" + name + ".txt";
-    if (std::filesystem::exists(path)) {
-        std::filesystem::remove(path);
-    }
-}
-
-std::string LoadCustomGlyphsPreset(const std::string& name) {
-    std::string path = GetCustomGlyphsDir() + "/" + name + ".txt";
-    std::ifstream in(path);
-    if (!in.is_open()) return "";
-    
-    std::stringstream buffer;
-    buffer << in.rdbuf();
-    return buffer.str();
-}
-
-void AddRecentStyle(std::string path) {
-    if (path.empty()) return;
-    // Remove if already exists to move to top
-    auto it = std::remove(g_RecentStyles.begin(), g_RecentStyles.end(), path);
-    g_RecentStyles.erase(it, g_RecentStyles.end());
-    // Insert at front
-    g_RecentStyles.insert(g_RecentStyles.begin(), path);
-    if (g_RecentStyles.size() > 10) g_RecentStyles.resize(10);
-    SaveRecentStyles();
-}
-
-void RemoveRecentStyle(std::string path) {
-    auto it = std::remove(g_RecentStyles.begin(), g_RecentStyles.end(), path);
-    g_RecentStyles.erase(it, g_RecentStyles.end());
-    SaveRecentStyles();
-}
-
-// --- Window & Style Persistence ---
-// --- Window & Style Persistence ---
-void SaveWindowConfig(int x, int y, int w, int h, bool ssaa) {
-    std::string path = Utils::GetConfigDir() + "/window.cfg";
-    std::string tmpPath = path + ".tmp";
-    std::ofstream out(tmpPath);
-    if (out.is_open()) {
-        out << w << " " << h << " " << (ssaa ? 1 : 0) << " " << x << " " << y;
-        out.close();
-        std::remove(path.c_str());
-        std::rename(tmpPath.c_str(), path.c_str());
-    }
-}
-
-void LoadWindowConfig(int& x, int& y, int& w, int& h, bool& ssaa) {
-    // Defaults matching center-ish usually, or rely on OS
-    x = 100; y = 100; w = 1280; h = 720; ssaa = false;
-
-    std::ifstream in(Utils::GetConfigDir() + "/window.cfg");
-    if (in.is_open()) {
-        int tempSSAA = 0;
-        in >> w >> h >> tempSSAA;
-        ssaa = (tempSSAA == 1);
-        
-        // Try reading pos if available (backward compat: check valid read)
-        if (!(in >> x >> y)) {
-            x = 100; y = 100; // Reset if not found
-        }
-    }
-    
-    if (w < 800) w = 800;
-    if (h < 600) h = 600;
-    
-    // Safety check for minimized/off-screen coordinates
-    if (x <= -32000 || y <= -32000) {
-        x = 100; 
-        y = 100;
-    }
-}
 
 // Simple JSON helpers
 void SaveStyle(const std::string& path);
 void LoadStyle(const std::string& path);
 // Custom Knob Widget
-bool KnobAngle(const char* label, float* p_value, float min_v, float max_v) {
-    ImGuiIO& io = ImGui::GetIO();
-    ImGuiStyle& style = ImGui::GetStyle();
-    
-    float radius_outer = 12.0f;
-    ImVec2 pos = ImGui::GetCursorScreenPos();
-    ImVec2 center = ImVec2(pos.x + radius_outer, pos.y + radius_outer);
-    float line_height = ImGui::GetTextLineHeight();
-    
-    ImGui::PushID(label);
 
-    // Interaction size
-    ImGui::InvisibleButton("##knob", ImVec2(radius_outer*2, radius_outer*2));
-    
-    bool value_changed = false;
-    bool is_active = ImGui::IsItemActive();
-    bool is_hovered = ImGui::IsItemHovered();
-    
-    if (is_active) {
-        ImVec2 d = ImVec2(io.MousePos.x - center.x, io.MousePos.y - center.y);
-        if (d.x*d.x + d.y*d.y > 0) {
-            float angle = std::atan2(d.y, d.x) * 180.0f / 3.14159265f;
-            *p_value = angle;
-            value_changed = true;
-        }
-    }
-
-    ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    draw_list->AddCircleFilled(center, radius_outer, ImGui::GetColorU32(ImGuiCol_FrameBg), 16);
-    draw_list->AddCircle(center, radius_outer, ImGui::GetColorU32(is_active ? ImGuiCol_FrameBgActive : is_hovered ? ImGuiCol_FrameBgHovered : ImGuiCol_Border), 16);
-    
-    float angle_rad = (*p_value) * 3.14159265f / 180.0f;
-    ImVec2 indicator_end = ImVec2(center.x + std::cos(angle_rad) * (radius_outer - 3), center.y + std::sin(angle_rad) * (radius_outer - 3));
-    draw_list->AddLine(center, indicator_end, ImGui::GetColorU32(ImGuiCol_Text), 2.0f);
-
-    // Label and Value to the Right
-    const char* label_end = strstr(label, "##");
-    std::string text_display = (label_end) ? std::string(label, label_end) : std::string(label);
-    ImVec2 text_size = ImGui::CalcTextSize(text_display.c_str());
-    
-    char val_buf[32]; 
-    sprintf(val_buf, "%.0f deg", *p_value);
-    
-    ImVec2 text_pos = ImVec2(pos.x + radius_outer*2 + style.ItemSpacing.x, pos.y);
-    draw_list->AddText(text_pos, ImGui::GetColorU32(ImGuiCol_Text), text_display.c_str());
-    
-    // Buttons (Next to Label)
-    ImVec2 btn_pos = ImVec2(text_pos.x + text_size.x + 20, text_pos.y - 3);
-    ImGui::SetCursorScreenPos(btn_pos);
-    
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 0));
-    
-    if (ImGui::Button("0", ImVec2(24, 19))) { *p_value = 0.0f; value_changed = true; } ImGui::SameLine();
-    if (ImGui::Button("90", ImVec2(24, 19))) { *p_value = 90.0f; value_changed = true; } ImGui::SameLine();
-    if (ImGui::Button("180", ImVec2(32, 19))) { *p_value = 180.0f; value_changed = true; } ImGui::SameLine();
-    if (ImGui::Button("-90", ImVec2(32, 19))) { *p_value = -90.0f; value_changed = true; }
-
-    ImGui::PopStyleVar(2);
-    ImGui::PopID();
-    
-    // Value (Below Label)
-    ImVec2 val_pos = ImVec2(text_pos.x, text_pos.y + line_height + 4);
-    draw_list->AddText(val_pos, ImGui::GetColorU32(ImGuiCol_Text), val_buf);
-    
-    // Reserve total height
-    // Button row ~ 16px. Value row ~ 13px. Total ~ 30px.
-    float total_height = 34.0f; // Safe margin
-    ImGui::SetCursorScreenPos(pos);
-    ImGui::Dummy(ImVec2(0, total_height + style.ItemSpacing.y));
-    
-    return value_changed;
-}
 
 void UpdatePreview(const char* text); // Forward checking
 
-// Implementation of Style Save/Load (simplified)
 // Implementation of Style Save/Load (simplified)
 void SaveStyle(const std::string& path) {
     std::ofstream out(path);
@@ -438,9 +208,9 @@ void SaveStyle(const std::string& path) {
     out << "],\n";
     
     // Custom Glyphs
-    out << "  \"useCustomGlyphs\": " << (g_UseCustomGlyphs ? "true" : "false") << ",\n";
+    out << "  \"useCustomGlyphs\": true,\n";
     std::string escCustom;
-    for(char c : std::string(g_CustomGlyphsText)) {
+    for(char c : g_CustomGlyphsText) {
         if(c == '\\') escCustom += "\\\\";
         else if(c == '"') escCustom += "\\\"";
         else if(c == '\n') escCustom += "\\n";
@@ -470,100 +240,7 @@ void SaveStyle(const std::string& path) {
     out << "}\n";
 }
 
-// Naive parser helper
-std::string ParseStringValue(const std::string& content, const std::string& key) {
-    size_t pos = content.find("\"" + key + "\"");
-    if (pos == std::string::npos) return "";
-    size_t start = content.find("\"", pos + key.length() + 2); // after "key":
-    if (start == std::string::npos) return "";
-    start++;
-    size_t end = content.find("\"", start);
-    
-    std::string val = content.substr(start, end - start);
-    // Unescape basic
-    std::string unescaped;
-    for(size_t i=0; i<val.length(); i++) {
-        if(val[i] == '\\' && i+1 < val.length() && val[i+1] == '\\') {
-            unescaped += '\\';
-            i++;
-        } else {
-            unescaped += val[i];
-        }
-    }
-    return unescaped;
-}
-float ParseFloatValue(const std::string& content, const std::string& key, float def) {
-    size_t pos = content.find("\"" + key + "\"");
-    if (pos == std::string::npos) return def;
-    size_t start = content.find(":", pos);
-    if (start == std::string::npos) return def;
-    
-    size_t end = content.find_first_of(",}\n", start);
-    if (end == std::string::npos) end = content.length();
-    
-    try {
-        return std::stof(content.substr(start + 1, end - (start + 1)));
-    } catch (...) {
-        return def;
-    }
-}
-int ParseIntValue(const std::string& content, const std::string& key, int def) {
-    return (int)ParseFloatValue(content, key, (float)def);
-}
-bool ParseBoolValue(const std::string& content, const std::string& key, bool def) {
-    size_t pos = content.find("\"" + key + "\"");
-    if (pos == std::string::npos) return def;
-    size_t start = content.find(":", pos);
-    if (start == std::string::npos) return def;
-    
-    size_t end = content.find_first_of(",}\n", start);
-    if (end == std::string::npos) end = content.length();
-    
-    std::string val = content.substr(start + 1, end - (start + 1));
-    return val.find("true") != std::string::npos;
-}
-void ParseColor3(const std::string& content, const std::string& key, float* col) {
-    size_t pos = content.find("\"" + key + "\"");
-    if (pos == std::string::npos) return;
-    size_t start = content.find("[", pos);
-    size_t end = content.find("]", start);
-    if(start == std::string::npos || end == std::string::npos) return;
-    std::string arr = content.substr(start+1, end-start-1);
-    std::stringstream ss(arr);
-    std::string seg;
-    int idx=0;
-    while(std::getline(ss, seg, ',') && idx < 3) {
-        try { col[idx++] = std::stof(seg); } catch(...) {}
-    }
-}
-void ParseColor4(const std::string& content, const std::string& key, float* col) {
-    size_t pos = content.find("\"" + key + "\"");
-    if (pos == std::string::npos) return;
-    size_t start = content.find("[", pos);
-    size_t end = content.find("]", start);
-    if(start == std::string::npos || end == std::string::npos) return;
-    std::string arr = content.substr(start+1, end-start-1);
-    std::stringstream ss(arr);
-    std::string seg;
-    int idx=0;
-    while(std::getline(ss, seg, ',') && idx < 4) {
-        try { col[idx++] = std::stof(seg); } catch(...) {}
-    }
-}
-void ParseIntArray(const std::string& content, const std::string& key, std::set<uint32_t>& outSet) {
-    size_t pos = content.find("\"" + key + "\"");
-    if (pos == std::string::npos) return;
-    size_t start = content.find("[", pos);
-    size_t end = content.find("]", start);
-    if(start == std::string::npos || end == std::string::npos) return;
-    
-    std::string arrStr = content.substr(start+1, end-start-1);
-    std::stringstream ss(arrStr);
-    std::string segment;
-    while(std::getline(ss, segment, ',')) {
-        try { outSet.insert((uint32_t)std::stoul(segment)); } catch(...) {}
-    }
-}
+
 
 void ParseGradientStops(const std::string& content, const std::string& key, ImGG::GradientWidget& widget) {
     size_t pos = content.find("\"" + key + "\"");
@@ -592,9 +269,9 @@ void ParseGradientStops(const std::string& content, const std::string& key, ImGG
         if(bObjClose == std::string::npos) break;
         
         std::string item = block.substr(bObj, bObjClose - bObj + 1);
-        float p = ParseFloatValue(item, "p", 0.0f);
+        float p = Utils::ParseFloatValue(item, "p", 0.0f);
         float c[4] = {1,1,1,1};
-        ParseColor4(item, "c", c);
+        Utils::ParseColor4(item, "c", c);
         
         widget.gradient().add_mark(ImGG::Mark(ImGG::RelativePosition(p), ImVec4(c[0], c[1], c[2], c[3])));
         
@@ -614,48 +291,48 @@ void LoadStyle(const std::string& path) {
     buffer << in.rdbuf();
     std::string c = buffer.str();
     
-    g_FontSize = ParseIntValue(c, "fontSize", g_FontSize);
-    g_Padding = ParseIntValue(c, "padding", g_Padding);
-    g_AtlasWidth = ParseIntValue(c, "atlasWidth", ParseIntValue(c, "atlasSize", 1024));
-    g_AtlasHeight = ParseIntValue(c, "atlasHeight", ParseIntValue(c, "atlasSize", 1024));
+    g_FontSize = Utils::ParseIntValue(c, "fontSize", g_FontSize);
+    g_Padding = Utils::ParseIntValue(c, "padding", g_Padding);
+    g_AtlasWidth = Utils::ParseIntValue(c, "atlasWidth", Utils::ParseIntValue(c, "atlasSize", 1024));
+    g_AtlasHeight = Utils::ParseIntValue(c, "atlasHeight", Utils::ParseIntValue(c, "atlasSize", 1024));
     
-    ParseColor4(c, "fillColor", g_FillColor);
-    g_EnableGradient = ParseBoolValue(c, "enableGradient", g_EnableGradient);
+    Utils::ParseColor4(c, "fillColor", g_FillColor);
+    g_EnableGradient = Utils::ParseBoolValue(c, "enableGradient", g_EnableGradient);
     
-    g_FillGradientType = ParseIntValue(c, "fillGradientType", 0);
-    g_FillGradientAngle = ParseFloatValue(c, "fillGradientAngle", 90.0f);
+    g_FillGradientType = Utils::ParseIntValue(c, "fillGradientType", 0);
+    g_FillGradientAngle = Utils::ParseFloatValue(c, "fillGradientAngle", 90.0f);
     ParseGradientStops(c, "fillGradientStops", g_FillGradientWidget);
     
-    g_EnableStroke = ParseBoolValue(c, "enableStroke", false);
-    g_StrokeWidth = ParseFloatValue(c, "strokeWidth", 2.0f);
-    ParseColor4(c, "strokeColor", g_StrokeColor);
+    g_EnableStroke = Utils::ParseBoolValue(c, "enableStroke", false);
+    g_StrokeWidth = Utils::ParseFloatValue(c, "strokeWidth", 2.0f);
+    Utils::ParseColor4(c, "strokeColor", g_StrokeColor);
     
-    g_EnableStrokeGradient = ParseBoolValue(c, "enableStrokeGradient", false);
-    g_StrokeGradientType = ParseIntValue(c, "strokeGradientType", 0);
-    g_StrokeGradientAngle = ParseFloatValue(c, "strokeGradientAngle", 90.0f);
+    g_EnableStrokeGradient = Utils::ParseBoolValue(c, "enableStrokeGradient", false);
+    g_StrokeGradientType = Utils::ParseIntValue(c, "strokeGradientType", 0);
+    g_StrokeGradientAngle = Utils::ParseFloatValue(c, "strokeGradientAngle", 90.0f);
     ParseGradientStops(c, "strokeGradientStops", g_StrokeGradientWidget);
     
-    g_EnableShadow = ParseBoolValue(c, "enableShadow", g_EnableShadow);
-    g_ShadowOffsetX = ParseIntValue(c, "shadowOffsetX", g_ShadowOffsetX);
-    g_ShadowOffsetY = ParseIntValue(c, "shadowOffsetY", g_ShadowOffsetY);
-    g_ShadowBlur = ParseIntValue(c, "shadowBlur", g_ShadowBlur);
-    ParseColor4(c, "shadowColor", g_ShadowColor);
+    g_EnableShadow = Utils::ParseBoolValue(c, "enableShadow", g_EnableShadow);
+    g_ShadowOffsetX = Utils::ParseIntValue(c, "shadowOffsetX", g_ShadowOffsetX);
+    g_ShadowOffsetY = Utils::ParseIntValue(c, "shadowOffsetY", g_ShadowOffsetY);
+    g_ShadowBlur = Utils::ParseIntValue(c, "shadowBlur", g_ShadowBlur);
+    Utils::ParseColor4(c, "shadowColor", g_ShadowColor);
+ 
+    g_EnableInnerGlow = Utils::ParseBoolValue(c, "enableInnerGlow", g_EnableInnerGlow);
+    g_InnerGlowSize = Utils::ParseFloatValue(c, "innerGlowSize", g_InnerGlowSize);
+    g_InnerGlowChoke = Utils::ParseFloatValue(c, "innerGlowChoke", g_InnerGlowChoke);
+    Utils::ParseColor4(c, "innerGlowColor", g_InnerGlowColor);
 
-    g_EnableInnerGlow = ParseBoolValue(c, "enableInnerGlow", g_EnableInnerGlow);
-    g_InnerGlowSize = ParseFloatValue(c, "innerGlowSize", g_InnerGlowSize);
-    g_InnerGlowChoke = ParseFloatValue(c, "innerGlowChoke", g_InnerGlowChoke);
-    ParseColor4(c, "innerGlowColor", g_InnerGlowColor);
-
-    g_EnableBevel = ParseBoolValue(c, "enableBevel", g_EnableBevel);
-    g_BevelDistance = ParseFloatValue(c, "bevelDistance", g_BevelDistance);
-    g_BevelAngle = ParseIntValue(c, "bevelAngle", g_BevelAngle);
-    ParseColor3(c, "bevelColor", g_BevelColor);
+    g_EnableBevel = Utils::ParseBoolValue(c, "enableBevel", g_EnableBevel);
+    g_BevelDistance = Utils::ParseFloatValue(c, "bevelDistance", g_BevelDistance);
+    g_BevelAngle = Utils::ParseIntValue(c, "bevelAngle", g_BevelAngle);
+    Utils::ParseColor3(c, "bevelColor", g_BevelColor);
     
-    std::string fname = ParseStringValue(c, "exportFilename");
+    std::string fname = Utils::ParseStringValue(c, "exportFilename");
     if(!fname.empty()) strncpy(g_ExportFilename, fname.c_str(), sizeof(g_ExportFilename));
     
     // Font Path
-    std::string fp = ParseStringValue(c, "fontPath");
+    std::string fp = Utils::ParseStringValue(c, "fontPath");
     if(!fp.empty()) {
         for(size_t i=0; i<g_SystemFonts.size(); i++) {
             if(g_SystemFonts[i].path == fp) {
@@ -668,10 +345,10 @@ void LoadStyle(const std::string& path) {
     
     // Excluded Glyphs
     g_ExcludedGlyphs.clear();
-    ParseIntArray(c, "excludedGlyphs", g_ExcludedGlyphs);
+    Utils::ParseIntArray(c, "excludedGlyphs", g_ExcludedGlyphs);
     
-    g_UseCustomGlyphs = ParseBoolValue(c, "useCustomGlyphs", false);
-    std::string customText = ParseStringValue(c, "customGlyphsText");
+    g_UseCustomGlyphs = true;
+    std::string customText = Utils::ParseStringValue(c, "customGlyphsText");
     if(!customText.empty()) {
         // Simple unescape for newline
         std::string unesc;
@@ -682,14 +359,14 @@ void LoadStyle(const std::string& path) {
                 unesc += customText[i];
             }
         }
-        strncpy(g_CustomGlyphsText, unesc.c_str(), sizeof(g_CustomGlyphsText));
+        g_CustomGlyphsText = unesc;
     }
     
-    g_ExportFormat = ParseIntValue(c, "exportFormat", 0);
-
-    g_GlobalXAdvance = ParseIntValue(c, "globalXAdvance", 0);
-    g_GlobalXOffset = ParseIntValue(c, "globalXOffset", 0);
-    g_GlobalYOffset = ParseIntValue(c, "globalYOffset", 0);
+    g_ExportFormat = Utils::ParseIntValue(c, "exportFormat", 0);
+ 
+    g_GlobalXAdvance = Utils::ParseIntValue(c, "globalXAdvance", 0);
+    g_GlobalXOffset = Utils::ParseIntValue(c, "globalXOffset", 0);
+    g_GlobalYOffset = Utils::ParseIntValue(c, "globalYOffset", 0);
 
     // Blocks
     for(auto& b : g_UnicodeBlocks) b.enabled = false;
@@ -717,39 +394,15 @@ void ToggleFavorite(const std::string& fontPath) {
     } else {
         g_FavoriteFonts.insert(fontPath);
     }
-    SaveFavorites();
+    Utils::SaveFavorites(g_FavoriteFonts);
 }
 
-// Check if font is favorite
+// IsFavorite remains as it's small/local
 bool IsFavorite(const std::string& fontPath) {
     return g_FavoriteFonts.count(fontPath) > 0;
 }
 
-// Helper to create a checkerboard texture
-void CreateCheckerTexture() {
-    int w = 32, h = 32;
-    std::vector<unsigned char> pixels(w * h * 4);
-    for (int y = 0; y < h; y++) {
-        for (int x = 0; x < w; x++) {
-            // 8x8 squares
-            bool dark = ((x / 8) + (y / 8)) % 2 == 1;
-            uint8_t c = dark ? 204 : 255; // Light gray and White
-            int idx = (y * w + x) * 4;
-            pixels[idx] = c;
-            pixels[idx+1] = c;
-            pixels[idx+2] = c;
-            pixels[idx+3] = 255;
-        }
-    }
-
-    glGenTextures(1, &g_CheckerTexture);
-    glBindTexture(GL_TEXTURE_2D, g_CheckerTexture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-}
+// checker texture helper moved to UIUtils/
 
 // The extended charset from the web app
 const char* EXTENDED_CHARSET_STR = 
@@ -866,42 +519,11 @@ void UpdatePreview(const char* text) {
     // Always uses selected Unicode blocks
     {
         // Generate charset
-        std::vector<uint32_t> charset;
+        std::vector<uint32_t> charset = Utils::DecodeUtf8(g_CustomGlyphsText.c_str());
         
-        if (g_UseCustomGlyphs) {
-            // From custom text
-            std::string text(g_CustomGlyphsText);
-            // Convert to utf32 (simple check for now, assumes ascii/basic or use helper)
-            // But FontManager expects unicode code points.
-            // Let's use a simple iterator. For advanced unicode, need a proper library or helper.
-            // Assuming the util helper handles UTF-8 strings:
-            // Actually let's use a helper if available, or just iterate chars for now (ASCII/Latin-1)
-            // For full unicode support in custom text logic, we need to decode UTF-8 `g_CustomGlyphsText`
-            
-            // Minimal UTF-8 decoder lambda
-            auto decodeUtf8 = [](const char* p) -> std::vector<uint32_t> {
-                std::vector<uint32_t> res;
-                while (*p) {
-                    uint32_t c = 0;
-                    if ((*p & 0x80) == 0) { c = *p++; }
-                    else if ((*p & 0xE0) == 0xC0) { c = (*p++ & 0x1F) << 6; c |= (*p++ & 0x3F); }
-                    else if ((*p & 0xF0) == 0xE0) { c = (*p++ & 0x0F) << 12; c |= (*p++ & 0x3F) << 6; c |= (*p++ & 0x3F); }
-                    else if ((*p & 0xF8) == 0xF0) { c = (*p++ & 0x07) << 18; c |= (*p++ & 0x3F) << 12; c |= (*p++ & 0x3F) << 6; c |= (*p++ & 0x3F); }
-                    else { p++; continue; } // Invalid
-                    res.push_back(c);
-                }
-                return res;
-            };
-            
-            charset = decodeUtf8(g_CustomGlyphsText);
-            
-            // Remove duplicates
-            std::sort(charset.begin(), charset.end());
-            charset.erase(std::unique(charset.begin(), charset.end()), charset.end());
-            
-        } else {
-             charset = GenerateCharsetFromBlocks(g_UnicodeBlocks);
-        }
+        // Remove duplicates
+        std::sort(charset.begin(), charset.end());
+        charset.erase(std::unique(charset.begin(), charset.end()), charset.end());
         
         // If no blocks selected, fallback to Basic Latin to prevent empty atlas errors
         // or confusion, unless intentional. Let's ensure at least ASCII is present if list empty.
@@ -975,16 +597,7 @@ static void glfw_error_callback(int error, const char* description) {
     fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
 
-// Case insensitive substring search
-bool StringContains(const std::string& str, const std::string& sub) {
-    if (sub.empty()) return true;
-    auto it = std::search(
-        str.begin(), str.end(),
-        sub.begin(), sub.end(),
-        [](char ch1, char ch2) { return std::toupper(ch1) == std::toupper(ch2); }
-    );
-    return (it != str.end());
-}
+// Case insensitive substring search moved to StringUtils/
 
 int main(int, char**) {
     // ... (Init code remains same until loop) ...
@@ -1010,11 +623,13 @@ int main(int, char**) {
 
     // Load Window Config from imgui.ini (geometry) and window.cfg (custom)
     int winW = 1280, winH = 720, winX = 100, winY = 100;
-    LoadWindowConfig(winX, winY, winW, winH, g_PreviewSSAA);
+    Utils::LoadWindowConfig(winX, winY, winW, winH, g_PreviewSSAA);
 
     GLFWwindow* window = glfwCreateWindow(winW, winH, "Fnt Generator", NULL, NULL);
     if (window == NULL)
         return 1;
+        
+    Utils::SetWindowIcon(window);
         
     // Set Position if available
     glfwSetWindowPos(window, winX, winY);
@@ -1072,9 +687,13 @@ int main(int, char**) {
         printf("Failed to init FontManager\n");
     }
     g_SystemFonts = Utils::GetSystemFonts();
-    LoadFavorites(); // Load favorite fonts
-    LoadRecentStyles();
-    CreateCheckerTexture();
+    Utils::LoadFavorites(g_FavoriteFonts); // Load favorite fonts
+    Utils::LoadRecentStyles(g_RecentStyles);
+    g_CheckerTexture = Utils::CreateCheckerTexture();
+    
+    // Initialize custom glyphs from default blocks (e.g. Basic Latin)
+    std::vector<uint32_t> initialCharset = GenerateCharsetFromBlocks(g_UnicodeBlocks);
+    g_CustomGlyphsText = Utils::EncodeUtf8(initialCharset);
 
     // Main loop
     while (!glfwWindowShouldClose(window)) {
@@ -1093,7 +712,7 @@ int main(int, char**) {
                      std::string file = Utils::PickFileDialog("JSON Project\0*.json\0");
                      if (!file.empty()) {
                          LoadStyle(file);
-                         AddRecentStyle(file);
+                         Utils::AddRecentStyle(g_RecentStyles, file);
                      }
                 }
                 if (ImGui::MenuItem("Save Project...")) {
@@ -1101,7 +720,7 @@ int main(int, char**) {
                      if (!file.empty()) {
                          if(file.find(".json") == std::string::npos) file += ".json";
                          SaveStyle(file);
-                         AddRecentStyle(file);
+                         Utils::AddRecentStyle(g_RecentStyles, file);
                      }
                 }
                 
@@ -1117,7 +736,7 @@ int main(int, char**) {
                                 std::ifstream fcheck(s);
                                 if(fcheck.good()) {
                                     LoadStyle(s);
-                                    AddRecentStyle(s);
+                                    Utils::AddRecentStyle(g_RecentStyles, s);
                                 } else {
                                     g_RecentNotFoundPath = s;
                                     g_ShowRecentError = true; 
@@ -1186,7 +805,7 @@ int main(int, char**) {
                 // Scrollable list of filtered fonts
                 for (int idx : sortedIndices) {
                     // Filter logic
-                    if (g_FontSearch[0] != '\0' && !StringContains(g_SystemFonts[idx].name, g_FontSearch)) {
+                    if (g_FontSearch[0] != '\0' && !Utils::StringContains(g_SystemFonts[idx].name, g_FontSearch)) {
                         continue;
                     }
                     
@@ -1238,84 +857,61 @@ int main(int, char**) {
                 UpdatePreview(g_InputText);
             }
             
-            // Unicode Blocks Selection
+            // Unicode Blocks & Custom Glyphs Selection
             ImGui::Separator();
-            if (ImGui::CollapsingHeader("Unicode Blocks")) {
-                // Quick actions
-                if (ImGui::Button("Select All##Blocks")) {
-                    for (auto& block : g_UnicodeBlocks) {
-                        block.enabled = true;
-                    }
-                    UpdatePreview(g_InputText);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Deselect All##Blocks")) {
-                    for (auto& block : g_UnicodeBlocks) {
-                        block.enabled = false;
-                    }
-                    UpdatePreview(g_InputText);
-                }
+            if (ImGui::CollapsingHeader("Unicode Blocks", ImGuiTreeNodeFlags_DefaultOpen)) {
                 
-                // Excluded Glyphs Management
+                // Excluded Glyphs Management - if any
                 if (!g_ExcludedGlyphs.empty()) {
-                    ImGui::SameLine();
                     char btnLabel[64];
                     sprintf(btnLabel, "Clear Excluded (%d)###ClearExcluded", (int)g_ExcludedGlyphs.size());
                     if (ImGui::Button(btnLabel)) {
                         g_ExcludedGlyphs.clear();
                         UpdatePreview(g_InputText);
                     }
+                    ImGui::SameLine();
                 }
-                
-                ImGui::Separator();
-                
-                // Unicode Blocks & Custom Glyphs
-                ImGui::Separator();
-                if (ImGui::Checkbox("Custom Glyphs", &g_UseCustomGlyphs)) {
-                     UpdatePreview(g_InputText);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Reset")) {
-                    strncpy(g_CustomGlyphsText, "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!№;%:?*()_+-=.,/|\"'@#$^&{}[]", sizeof(g_CustomGlyphsText) - 1);
+
+                if (ImGui::Button("Reset All")) {
+                    g_CustomGlyphsText = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!№;%:?*()_+-=.,/|\"'@#$^&{}[]";
+                    for(auto& b : g_UnicodeBlocks) b.enabled = false;
                     UpdatePreview(g_InputText);
                 }
                 ImGui::SameLine();
                 
-                // Save Button (Icon)
-                ImVec2 p = ImGui::GetCursorScreenPos();
+                // Save/Load Presets
+                ImVec2 pSave = ImGui::GetCursorScreenPos();
                 if (ImGui::Button("##SavePreset", ImVec2(24, 24))) {
                     ImGui::OpenPopup("SavePresetPopup");
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save Preset");
                 
-                // Draw Save Icon (Floppy)
+                // Floppy Icon
                 ImDrawList* draw_list = ImGui::GetWindowDrawList();
-                float x = p.x + 4, y = p.y + 4; // Margin
+                float x = pSave.x + 4, y = pSave.y + 4;
                 ImU32 iconCol = ImGui::GetColorU32(ImGuiCol_Text);
-                draw_list->AddRect(ImVec2(x, y), ImVec2(x+16, y+16), iconCol, 1.0f); // Body
-                draw_list->AddRectFilled(ImVec2(x+4, y), ImVec2(x+12, y+5), iconCol); // Top shutter
-                draw_list->AddRectFilled(ImVec2(x+3, y+10), ImVec2(x+13, y+16), iconCol); // Sticker
-                
+                draw_list->AddRect(ImVec2(x, y), ImVec2(x+16, y+16), iconCol, 1.0f);
+                draw_list->AddRectFilled(ImVec2(x+4, y), ImVec2(x+12, y+5), iconCol);
+                draw_list->AddRectFilled(ImVec2(x+3, y+10), ImVec2(x+13, y+16), iconCol);
+
                 ImGui::SameLine();
-                
-                // Load Button (Icon)
-                p = ImGui::GetCursorScreenPos();
+                ImVec2 pLoad = ImGui::GetCursorScreenPos();
                 if (ImGui::Button("##LoadPreset", ImVec2(24, 24))) {
-                     ImGui::OpenPopup("LoadPresetPopup");
+                    ImGui::OpenPopup("LoadPresetPopup");
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load Preset");
 
-                // Draw Load Icon (Folder)
-                x = p.x + 4; y = p.y + 4;
-                draw_list->AddRectFilled(ImVec2(x, y+2), ImVec2(x+16, y+14), iconCol, 1.0f); // Body
-                draw_list->AddRectFilled(ImVec2(x, y), ImVec2(x+6, y+3), iconCol, 1.0f); // Tab
-                draw_list->AddLine(ImVec2(x, y+4), ImVec2(x+16, y+4), ImGui::GetColorU32(ImGuiCol_WindowBg), 1.0f); // Gap hint
+                // Folder Icon
+                x = pLoad.x + 4; y = pLoad.y + 4;
+                draw_list->AddRectFilled(ImVec2(x, y+2), ImVec2(x+16, y+14), iconCol, 1.0f);
+                draw_list->AddRectFilled(ImVec2(x, y), ImVec2(x+6, y+3), iconCol, 1.0f);
+                draw_list->AddLine(ImVec2(x, y+4), ImVec2(x+16, y+4), ImGui::GetColorU32(ImGuiCol_WindowBg), 1.0f);
 
                 if (ImGui::BeginPopup("SavePresetPopup")) {
                     static char presetName[64] = "";
                     ImGui::InputText("Name", presetName, 64);
                     if (ImGui::Button("Save")) {
-                        SaveCustomGlyphsPreset(presetName, g_CustomGlyphsText);
+                    Utils::SaveCustomGlyphsPreset(presetName, g_CustomGlyphsText);
                         ImGui::CloseCurrentPopup();
                     }
                     ImGui::SameLine();
@@ -1324,87 +920,88 @@ int main(int, char**) {
                 }
 
                 if (ImGui::BeginPopup("LoadPresetPopup")) {
-                    // Ensure minimum width
-                    ImGui::Dummy(ImVec2(200, 0));
-                    
-                    std::vector<std::string> presets = GetCustomGlyphsPresets();
+                    std::vector<std::string> presets = Utils::GetCustomGlyphsPresets();
                     if (presets.empty()) {
                         ImGui::TextDisabled("No presets found");
                     } else {
-                        float winWidth = ImGui::GetWindowSize().x;
-                        float btnSize = 20.0f;
-                        float spacing = ImGui::GetStyle().ItemSpacing.x;
-                        
-                        for (int i = 0; i < presets.size(); ++i) {
-                            ImGui::PushID(i);
-                            std::string p = presets[i];
-                            
-                            // Selectable width = Window Width - Button Size - Scrollbar margin(approx)
-                            // Actually GetContentRegionAvail works well if window is sized.
-                            float avail = ImGui::GetContentRegionAvail().x;
-                            float btnOnlyWidth = 20.0f;
-                            float spacing = ImGui::GetStyle().ItemSpacing.x;
-                            float selWidth = avail - btnOnlyWidth - spacing;
-                            
-                            // Ensure selectable has a minimum width
-                            if (selWidth < 10) selWidth = 10;
-                            
-                            // Match height to FrameHeight for consistent alignment
-                            float itemHeight = ImGui::GetFrameHeight();
-
-                            if (ImGui::Selectable(p.c_str(), false, 0, ImVec2(selWidth, itemHeight))) {
-                                std::string content = LoadCustomGlyphsPreset(p);
+                        for (const auto& p : presets) {
+                            if (ImGui::Selectable(p.c_str())) {
+                                std::string content = Utils::LoadCustomGlyphsPreset(p);
                                 if (!content.empty()) {
-                                    strncpy(g_CustomGlyphsText, content.c_str(), sizeof(g_CustomGlyphsText)-1);
+                                    g_CustomGlyphsText = content;
                                     UpdatePreview(g_InputText);
-                                    ImGui::CloseCurrentPopup();
                                 }
+                                ImGui::CloseCurrentPopup();
                             }
-                            
-                            ImGui::SameLine();
-                            
-                            // Delete ("X") - sized to match height
-                            if (ImGui::Button("X", ImVec2(btnOnlyWidth, itemHeight))) {
-                                DeleteCustomGlyphsPreset(p);
-                                ImGui::PopID();
-                                break; 
-                            }
-                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete Preset");
-                            
-                            ImGui::PopID();
                         }
                     }
                     ImGui::EndPopup();
                 }
-                
-                if (g_UseCustomGlyphs) {
-                    // Only show editor if custom is checked
-                    ImGui::InputTextMultiline("##CustomGlyphs", g_CustomGlyphsText, IM_ARRAYSIZE(g_CustomGlyphsText), ImVec2(-1, 200));
-                    if(ImGui::IsItemDeactivatedAfterEdit()) UpdatePreview(g_InputText);
-                    ImGui::TextDisabled("(Newlines are ignored. You can press Enter to wrap text manually)");
-                } else {
-                    // Scrollable list of blocks
-                    if (ImGui::Button("Select All")) {
-                        for(auto& b : g_UnicodeBlocks) b.enabled = true;
-                        UpdatePreview(g_InputText);
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Deselect All")) {
-                        for(auto& b : g_UnicodeBlocks) b.enabled = false;
-                        UpdatePreview(g_InputText);
-                    }
-                    
-                    ImGui::BeginChild("BlocksList", ImVec2(0, 200), true);
-                    for (auto& block : g_UnicodeBlocks) {
-                        if (ImGui::Checkbox(block.name.c_str(), &block.enabled)) {
-                            UpdatePreview(g_InputText);
-                        }
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("U+%04X - U+%04X", block.start, block.end);
-                        }
-                    }
-                    ImGui::EndChild();
+
+                ImGui::Text("Custom Glyphs:");
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
+                if (ImGui::InputTextMultiline("##CustomGlyphs", (char*)g_CustomGlyphsText.c_str(), g_CustomGlyphsText.capacity() + 1, ImVec2(-1, 150), ImGuiInputTextFlags_CallbackResize, Utils::MyResizeCallback, (void*)&g_CustomGlyphsText)) {
+                    UpdatePreview(g_InputText);
                 }
+                ImGui::PopStyleVar();
+                ImGui::TextDisabled("(Newlines are ignored in atlas)");
+
+                // Quick actions for blocks
+                if (ImGui::Button("Select All Blocks")) {
+                    std::set<uint32_t> charSet;
+                    for(auto& b : g_UnicodeBlocks) {
+                        b.enabled = true;
+                        for(uint32_t cp = b.start; cp <= b.end; cp++) if(cp >= 32) charSet.insert(cp);
+                    }
+                    g_CustomGlyphsText = Utils::EncodeUtf8(std::vector<uint32_t>(charSet.begin(), charSet.end()));
+                    UpdatePreview(g_InputText);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Deselect All Blocks")) {
+                    for(auto& b : g_UnicodeBlocks) b.enabled = false;
+                    g_CustomGlyphsText = "";
+                    UpdatePreview(g_InputText);
+                }
+                
+                ImGui::BeginChild("BlocksList", ImVec2(0, 150), true);
+                for (auto& block : g_UnicodeBlocks) {
+                    if (ImGui::Checkbox(block.name.c_str(), &block.enabled)) {
+                        // 1. Get current characters
+                        std::vector<uint32_t> currentChars = Utils::DecodeUtf8(g_CustomGlyphsText.c_str());
+                        std::set<uint32_t> charSet(currentChars.begin(), currentChars.end());
+                        
+                        // 2. Identify characters that were "manually" added (don't belong to any defined block)
+                        std::set<uint32_t> manualChars;
+                        for (uint32_t cp : charSet) {
+                            bool belongsToAnyBlock = false;
+                            for (const auto& b : g_UnicodeBlocks) {
+                                if (cp >= b.start && cp <= b.end) {
+                                    belongsToAnyBlock = true;
+                                    break;
+                                }
+                            }
+                            if (!belongsToAnyBlock) manualChars.insert(cp);
+                        }
+                        
+                        // 3. Rebuild the set from enabled blocks + manual additions
+                        std::set<uint32_t> finalSet = manualChars;
+                        for (const auto& b : g_UnicodeBlocks) {
+                            if (b.enabled) {
+                                for (uint32_t cp = b.start; cp <= b.end; cp++) {
+                                    if (cp >= 32) finalSet.insert(cp);
+                                }
+                            }
+                        }
+                        
+                        std::vector<uint32_t> nextChars(finalSet.begin(), finalSet.end());
+                        g_CustomGlyphsText = Utils::EncodeUtf8(nextChars);
+                        UpdatePreview(g_InputText);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("U+%04X - U+%04X", block.start, block.end);
+                    }
+                }
+                ImGui::EndChild();
             }
 
             // Size with +/- buttons
@@ -1443,7 +1040,7 @@ int main(int, char**) {
                 }
             } else {
                 if (ImGui::Combo("Type##Fill", &g_FillGradientType, "Linear\0Radial\0")) UpdatePreview(g_InputText);
-                if (KnobAngle("Angle##Fill", &g_FillGradientAngle, -180.0f, 180.0f)) UpdatePreview(g_InputText);
+                if (Utils::KnobAngle("Angle##Fill", &g_FillGradientAngle, -180.0f, 180.0f)) UpdatePreview(g_InputText);
                 
                 ImGui::Dummy(ImVec2(0, 5));
                 if (g_FillGradientWidget.widget("Fill Gradient")) {
@@ -1467,7 +1064,7 @@ int main(int, char**) {
                          if (ImGui::ColorEdit4("Line Color", g_StrokeColor)) UpdatePreview(g_InputText);
                     } else {
                          if (ImGui::Combo("Type##Stroke", &g_StrokeGradientType, "Linear\0Radial\0")) UpdatePreview(g_InputText);
-                         if (KnobAngle("Angle##Stroke", &g_StrokeGradientAngle, -180.0f, 180.0f)) UpdatePreview(g_InputText);
+                         if (Utils::KnobAngle("Angle##Stroke", &g_StrokeGradientAngle, -180.0f, 180.0f)) UpdatePreview(g_InputText);
 
                          ImGui::Dummy(ImVec2(0, 5));
                          if (g_StrokeGradientWidget.widget("Stroke Gradient")) {
@@ -1595,29 +1192,10 @@ int main(int, char**) {
                          hqSettings.useSuperSampling = true;
                          hqSettings.hintingMode = g_HintingMode;
 
-                         // Re-generate charset logic
-                         std::vector<uint32_t> charset;
-                         if (g_UseCustomGlyphs) {
-                            auto decodeUtf8 = [](const char* p) -> std::vector<uint32_t> {
-                                std::vector<uint32_t> res;
-                                while (*p) {
-                                    uint32_t c = 0;
-                                    if ((*p & 0x80) == 0) { c = *p++; }
-                                    else if ((*p & 0xE0) == 0xC0) { c = (*p++ & 0x1F) << 6; c |= (*p++ & 0x3F); }
-                                    else if ((*p & 0xF0) == 0xE0) { c = (*p++ & 0x0F) << 12; c |= (*p++ & 0x3F) << 6; c |= (*p++ & 0x3F); }
-                                    else if ((*p & 0xF8) == 0xF0) { c = (*p++ & 0x07) << 18; c |= (*p++ & 0x3F) << 12; c |= (*p++ & 0x3F) << 6; c |= (*p++ & 0x3F); }
-                                    else { p++; continue; }
-                                    if (c < 32) continue; // Ignore control characters (newlines, tabs, etc)
-                                    res.push_back(c);
-                                }
-                                return res;
-                            };
-                            charset = decodeUtf8(g_CustomGlyphsText);
-                            std::sort(charset.begin(), charset.end());
-                            charset.erase(std::unique(charset.begin(), charset.end()), charset.end());
-                         } else {
-                            charset = GenerateCharsetFromBlocks(g_UnicodeBlocks);
-                         }
+                          // Re-generate charset logic
+                           std::vector<uint32_t> charset = Utils::DecodeUtf8(g_CustomGlyphsText.c_str());
+                          std::sort(charset.begin(), charset.end());
+                          charset.erase(std::unique(charset.begin(), charset.end()), charset.end());
 
                          if(charset.empty()) { for(uint32_t c=0x20; c<=0x7E; c++) charset.push_back(c); }
                          
@@ -1651,7 +1229,7 @@ int main(int, char**) {
                                  g_LastAtlas = hqAtlas;
                                  if(g_PreviewTexture) glDeleteTextures(1, &g_PreviewTexture);
                                  glGenTextures(1, &g_PreviewTexture);
-                                 glBindTexture(GL_TEXTURE_2D, g_PreviewTexture);
+                                  glBindTexture(GL_TEXTURE_2D, g_PreviewTexture);
                                  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                                  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
                                  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, g_LastAtlas.width, g_LastAtlas.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_LastAtlas.pixels.data());
@@ -1891,43 +1469,15 @@ int main(int, char**) {
                                 const auto& g = g_LastAtlas.glyphs[g_SelectedGlyphIndex];
                                 ImGui::Text("Selected: U+%04X", g.charCode);
                                 ImGui::Separator();
-                                if (ImGui::MenuItem("Remove from Atlas")) {
-                                    if (g_UseCustomGlyphs) {
-                                        // Remove from custom text string directly
-                                        std::string s(g_CustomGlyphsText);
-                                        // Simple remove all instances of this char code (utf-8 aware would be better but for now naive remove)
-                                        // We need to re-encode the char to UTF-8 to find it? Or just iterate.
-                                        
-                                        // Better approach: Reconstruct string without this char.
-                                        std::string newS;
-                                        // Use the decode helper again to iterate properly? Or just manual.
-                                        // Let's iterate byte by byte and decode, skipping the target char.
-                                        const char* p = g_CustomGlyphsText;
-                                        while (*p) {
-                                            const char* start = p;
-                                            uint32_t c = 0;
-                                            if ((*p & 0x80) == 0) { c = *p++; }
-                                            else if ((*p & 0xE0) == 0xC0) { c = (*p++ & 0x1F) << 6; c |= (*p++ & 0x3F); }
-                                            else if ((*p & 0xF0) == 0xE0) { c = (*p++ & 0x0F) << 12; c |= (*p++ & 0x3F) << 6; c |= (*p++ & 0x3F); }
-                                            else if ((*p & 0xF8) == 0xF0) { c = (*p++ & 0x07) << 18; c |= (*p++ & 0x3F) << 12; c |= (*p++ & 0x3F) << 6; c |= (*p++ & 0x3F); }
-                                            else { p++; continue; } 
-                                            
-                                            if (c != g.charCode) {
-                                                // Append original bytes
-                                                newS.append(start, p - start);
-                                            }
-                                        }
-                                        
-                                        strncpy(g_CustomGlyphsText, newS.c_str(), sizeof(g_CustomGlyphsText) - 1);
-                                        g_CustomGlyphsText[sizeof(g_CustomGlyphsText) - 1] = '\0'; // Ensure null term
-
-                                    } else {
-                                        g_ExcludedGlyphs.insert(g.charCode);
-                                    }
-                                    
-                                    UpdatePreview(g_InputText);
-                                    g_SelectedGlyphIndex = -1;
-                                }
+                                 if (ImGui::MenuItem("Remove from Atlas")) {
+                                     std::vector<uint32_t> chars = Utils::DecodeUtf8(g_CustomGlyphsText.c_str());
+                                     std::vector<uint32_t> filtered;
+                                     for(uint32_t c : chars) if(c != g.charCode) filtered.push_back(c);
+                                     g_CustomGlyphsText = Utils::EncodeUtf8(filtered);
+                                     
+                                     UpdatePreview(g_InputText);
+                                     g_SelectedGlyphIndex = -1;
+                                 }
                             }
                             ImGui::EndPopup();
                         }
@@ -1954,7 +1504,7 @@ int main(int, char**) {
             ImGui::Text("File not found:\n%s", g_RecentNotFoundPath.c_str());
             ImGui::Separator();
             if (ImGui::Button("Remove from Recents", ImVec2(160, 0))) {
-                RemoveRecentStyle(g_RecentNotFoundPath);
+                Utils::RemoveRecentStyle(g_RecentStyles, g_RecentNotFoundPath);
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
@@ -2004,7 +1554,7 @@ int main(int, char**) {
     int curX, curY;
     glfwGetWindowSize(window, &curW, &curH);
     glfwGetWindowPos(window, &curX, &curY);
-    SaveWindowConfig(curX, curY, curW, curH, g_PreviewSSAA);
+    Utils::SaveWindowConfig(curX, curY, curW, curH, g_PreviewSSAA);
 
     // Cleanup
     ImGui_ImplOpenGL3_Shutdown();

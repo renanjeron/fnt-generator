@@ -21,4 +21,5 @@ namespace Utils {
     // Opens a native save file dialog
     std::string SaveFileDialog(const char* filter, const char* defaultName);
     std::string GetConfigDir();
+    std::string GetExecutablePath();
 }

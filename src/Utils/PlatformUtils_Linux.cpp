@@ -93,5 +93,19 @@ namespace Utils {
         std::filesystem::create_directories(path);
         return path;
     }
+
+    std::string GetExecutablePath() {
+        char buffer[1024];
+        ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+        if (len != -1) {
+            buffer[len] = '\0';
+            std::string s(buffer);
+            size_t last = s.find_last_of("/");
+            if (last != std::string::npos) {
+                return s.substr(0, last);
+            }
+        }
+        return ".";
+    }
 }
 #endif

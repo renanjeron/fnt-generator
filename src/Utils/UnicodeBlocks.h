@@ -18,6 +18,9 @@ static const std::vector<UnicodeBlock> UNICODE_BLOCKS = {
     {"Latin Extended-A", 0x0100, 0x017F, false},
     {"Latin Extended-B", 0x0180, 0x024F, false},
     
+    // Digits
+    {"Numerals", 0x0030, 0x0039, false},
+    
     // Spacing & Modifiers
     {"Spacing Modifier Letters", 0x02B0, 0x02FF, false},
     {"Combining Diacritical Marks", 0x0300, 0x036F, false},
@@ -62,7 +65,7 @@ inline std::vector<uint32_t> GenerateCharsetFromBlocks(const std::vector<Unicode
     for (const auto& block : blocks) {
         if (block.enabled) {
             for (uint32_t code = block.start; code <= block.end; code++) {
-                charset.push_back(code);
+                if (code >= 32) charset.push_back(code);
             }
         }
     }

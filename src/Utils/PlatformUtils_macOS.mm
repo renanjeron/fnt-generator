@@ -79,5 +79,14 @@ namespace Utils {
         
         return [fullPath UTF8String];
     }
+
+    std::string GetExecutablePath() {
+        NSString* path = [[NSBundle mainBundle] executablePath];
+        if (path) {
+            NSString* dir = [path stringByDeletingLastPathComponent];
+            return [dir UTF8String];
+        }
+        return ".";
+    }
 }
 #endif

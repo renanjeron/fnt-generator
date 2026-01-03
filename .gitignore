@@ -50,7 +50,7 @@
 # Font Exporter specific
 *.imgui.ini
 *.fnt
-*.png
+!res/*.png
 !images/*.png
 # Keep user saved json styles if desired, or exclude:
 # *.json

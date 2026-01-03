@@ -214,7 +214,26 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
                 if (!fits) currentS *= 2;
             }
             atlasWidth = currentS;
-            atlasHeight = currentS;
+            
+            // Now minimize height for this width
+            int vX = settings.padding;
+            int vY = settings.padding;
+            int vRowH = 0;
+            for (const auto& rc : chars) {
+                if (vX + rc.packingWidth + settings.padding > atlasWidth) {
+                    vX = settings.padding;
+                    vY += vRowH + settings.padding;
+                    vRowH = 0;
+                }
+                if (rc.packingHeight > vRowH) vRowH = rc.packingHeight;
+                vX += rc.packingWidth + settings.padding;
+            }
+            int neededH = vY + vRowH + settings.padding;
+            atlasHeight = 128;
+            while (atlasHeight < neededH && atlasHeight < 4096) atlasHeight *= 2;
+            
+            // Safety: ensure it doesn't exceed 4096 and is at least POT of 128
+            if (atlasHeight > 4096) atlasHeight = 4096;
         } else if (atlasHeight <= 0) {
             // Only Height is auto: Find smallest POT height for fixed width
             int vX = settings.padding;

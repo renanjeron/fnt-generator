@@ -164,5 +164,16 @@ namespace Utils {
         }
         return ".";
     }
+
+    std::string GetExecutablePath() {
+        char path[MAX_PATH];
+        GetModuleFileNameA(NULL, path, MAX_PATH);
+        std::string s(path);
+        size_t last = s.find_last_of("\\/");
+        if (last != std::string::npos) {
+            return s.substr(0, last);
+        }
+        return ".";
+    }
 }
 #endif
