@@ -2,6 +2,7 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+#include <imgui_gradient/imgui_gradient.hpp>
 #include <stdio.h>
 #include <GLFW/glfw3.h>
 #include <vector>
@@ -30,17 +31,22 @@ static int g_Padding = 5;
 static int g_AtlasSize = 1024;
 
 // Fill
-static float g_FillColor[3] = {1.0f, 1.0f, 1.0f};
+// Fill
+static float g_FillColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 static bool g_EnableGradient = false;
-static float g_GradientStart[3] = {1.0f, 1.0f, 1.0f};
-static float g_GradientEnd[3] = {0.5f, 0.5f, 0.5f};
+static ImGG::GradientWidget g_FillGradientWidget;
+static int g_FillGradientType = 0; // 0=Linear, 1=Radial
+static float g_FillGradientAngle = 90.0f;
 
 // Stroke
 static bool g_EnableStroke = false;
 static bool g_EnableStrokeGradient = false;
 static float g_StrokeWidth = 2.0f;
-static float g_StrokeColor[3] = {0.0f, 0.0f, 0.0f};
-static float g_StrokeColorBottom[3] = {0.0f, 0.0f, 0.0f};
+static float g_StrokeColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+static ImGG::GradientWidget g_StrokeGradientWidget;
+static int g_StrokeGradientType = 0;
+static float g_StrokeGradientAngle = 90.0f;
+static int g_StrokePosition = 0; // 0=Outside, 1=Center, 2=Inside
 
 // Shadow
 static bool g_EnableShadow = false;
@@ -256,11 +262,92 @@ void LoadWindowConfig(int& x, int& y, int& w, int& h, bool& ssaa) {
     
     if (w < 800) w = 800;
     if (h < 600) h = 600;
+    
+    // Safety check for minimized/off-screen coordinates
+    if (x <= -32000 || y <= -32000) {
+        x = 100; 
+        y = 100;
+    }
 }
 
 // Simple JSON helpers
 void SaveStyle(const std::string& path);
 void LoadStyle(const std::string& path);
+// Custom Knob Widget
+bool KnobAngle(const char* label, float* p_value, float min_v, float max_v) {
+    ImGuiIO& io = ImGui::GetIO();
+    ImGuiStyle& style = ImGui::GetStyle();
+    
+    float radius_outer = 12.0f;
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImVec2 center = ImVec2(pos.x + radius_outer, pos.y + radius_outer);
+    float line_height = ImGui::GetTextLineHeight();
+    
+    ImGui::PushID(label);
+
+    // Interaction size
+    ImGui::InvisibleButton("##knob", ImVec2(radius_outer*2, radius_outer*2));
+    
+    bool value_changed = false;
+    bool is_active = ImGui::IsItemActive();
+    bool is_hovered = ImGui::IsItemHovered();
+    
+    if (is_active) {
+        ImVec2 d = ImVec2(io.MousePos.x - center.x, io.MousePos.y - center.y);
+        if (d.x*d.x + d.y*d.y > 0) {
+            float angle = std::atan2(d.y, d.x) * 180.0f / 3.14159265f;
+            *p_value = angle;
+            value_changed = true;
+        }
+    }
+
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    draw_list->AddCircleFilled(center, radius_outer, ImGui::GetColorU32(ImGuiCol_FrameBg), 16);
+    draw_list->AddCircle(center, radius_outer, ImGui::GetColorU32(is_active ? ImGuiCol_FrameBgActive : is_hovered ? ImGuiCol_FrameBgHovered : ImGuiCol_Border), 16);
+    
+    float angle_rad = (*p_value) * 3.14159265f / 180.0f;
+    ImVec2 indicator_end = ImVec2(center.x + std::cos(angle_rad) * (radius_outer - 3), center.y + std::sin(angle_rad) * (radius_outer - 3));
+    draw_list->AddLine(center, indicator_end, ImGui::GetColorU32(ImGuiCol_Text), 2.0f);
+
+    // Label and Value to the Right
+    const char* label_end = strstr(label, "##");
+    std::string text_display = (label_end) ? std::string(label, label_end) : std::string(label);
+    ImVec2 text_size = ImGui::CalcTextSize(text_display.c_str());
+    
+    char val_buf[32]; 
+    sprintf(val_buf, "%.0f deg", *p_value);
+    
+    ImVec2 text_pos = ImVec2(pos.x + radius_outer*2 + style.ItemSpacing.x, pos.y);
+    draw_list->AddText(text_pos, ImGui::GetColorU32(ImGuiCol_Text), text_display.c_str());
+    
+    // Buttons (Next to Label)
+    ImVec2 btn_pos = ImVec2(text_pos.x + text_size.x + 20, text_pos.y - 3);
+    ImGui::SetCursorScreenPos(btn_pos);
+    
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 0));
+    
+    if (ImGui::Button("0", ImVec2(24, 19))) { *p_value = 0.0f; value_changed = true; } ImGui::SameLine();
+    if (ImGui::Button("90", ImVec2(24, 19))) { *p_value = 90.0f; value_changed = true; } ImGui::SameLine();
+    if (ImGui::Button("180", ImVec2(32, 19))) { *p_value = 180.0f; value_changed = true; } ImGui::SameLine();
+    if (ImGui::Button("-90", ImVec2(32, 19))) { *p_value = -90.0f; value_changed = true; }
+
+    ImGui::PopStyleVar(2);
+    ImGui::PopID();
+    
+    // Value (Below Label)
+    ImVec2 val_pos = ImVec2(text_pos.x, text_pos.y + line_height + 4);
+    draw_list->AddText(val_pos, ImGui::GetColorU32(ImGuiCol_Text), val_buf);
+    
+    // Reserve total height
+    // Button row ~ 16px. Value row ~ 13px. Total ~ 30px.
+    float total_height = 34.0f; // Safe margin
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::Dummy(ImVec2(0, total_height + style.ItemSpacing.y));
+    
+    return value_changed;
+}
+
 void UpdatePreview(const char* text); // Forward checking
 
 // Implementation of Style Save/Load (simplified)
@@ -273,16 +360,41 @@ void SaveStyle(const std::string& path) {
     out << "  \"fontSize\": " << g_FontSize << ",\n";
     out << "  \"padding\": " << g_Padding << ",\n";
     out << "  \"atlasSize\": " << g_AtlasSize << ",\n";
-    out << "  \"fillColor\": [" << g_FillColor[0] << ", " << g_FillColor[1] << ", " << g_FillColor[2] << "],\n";
+    out << "  \"fillColor\": [" << g_FillColor[0] << ", " << g_FillColor[1] << ", " << g_FillColor[2] << ", " << g_FillColor[3] << "],\n";
+    
     out << "  \"enableGradient\": " << (g_EnableGradient ? "true" : "false") << ",\n";
-    out << "  \"gradientStart\": [" << g_GradientStart[0] << ", " << g_GradientStart[1] << ", " << g_GradientStart[2] << "],\n";
-    out << "  \"gradientEnd\": [" << g_GradientEnd[0] << ", " << g_GradientEnd[1] << ", " << g_GradientEnd[2] << "],\n";
+    out << "  \"fillGradientType\": " << g_FillGradientType << ",\n";
+    out << "  \"fillGradientAngle\": " << g_FillGradientAngle << ",\n";
+    out << "  \"fillGradientStops\": [";
+    {
+        auto marks = g_FillGradientWidget.gradient().get_marks();
+        bool first = true;
+        for(const auto& m : marks) {
+            if(!first) out << ", ";
+            out << "{ \"p\": " << m.position.get() << ", \"c\": [" << m.color.x << ", " << m.color.y << ", " << m.color.z << ", " << m.color.w << "] }";
+            first = false;
+        }
+    }
+    out << "],\n";
     
     out << "  \"enableStroke\": " << (g_EnableStroke ? "true" : "false") << ",\n";
-    out << "  \"enableStrokeGradient\": " << (g_EnableStrokeGradient ? "true" : "false") << ",\n";
     out << "  \"strokeWidth\": " << g_StrokeWidth << ",\n";
-    out << "  \"strokeColor\": [" << g_StrokeColor[0] << ", " << g_StrokeColor[1] << ", " << g_StrokeColor[2] << "],\n";
-    out << "  \"strokeColorBottom\": [" << g_StrokeColorBottom[0] << ", " << g_StrokeColorBottom[1] << ", " << g_StrokeColorBottom[2] << "],\n";
+    out << "  \"strokeColor\": [" << g_StrokeColor[0] << ", " << g_StrokeColor[1] << ", " << g_StrokeColor[2] << ", " << g_StrokeColor[3] << "],\n";
+    
+    out << "  \"enableStrokeGradient\": " << (g_EnableStrokeGradient ? "true" : "false") << ",\n";
+    out << "  \"strokeGradientType\": " << g_StrokeGradientType << ",\n";
+    out << "  \"strokeGradientAngle\": " << g_StrokeGradientAngle << ",\n";
+    out << "  \"strokeGradientStops\": [";
+    {
+        auto marks = g_StrokeGradientWidget.gradient().get_marks();
+        bool first = true;
+        for(const auto& m : marks) {
+            if(!first) out << ", ";
+            out << "{ \"p\": " << m.position.get() << ", \"c\": [" << m.color.x << ", " << m.color.y << ", " << m.color.z << ", " << m.color.w << "] }";
+            first = false;
+        }
+    }
+    out << "],\n";
     
     out << "  \"enableShadow\": " << (g_EnableShadow ? "true" : "false") << ",\n";
     out << "  \"shadowOffsetX\": " << g_ShadowOffsetX << ",\n";
@@ -412,15 +524,29 @@ void ParseColor3(const std::string& content, const std::string& key, float* col)
     size_t pos = content.find("\"" + key + "\"");
     if (pos == std::string::npos) return;
     size_t start = content.find("[", pos);
-    if(start == std::string::npos) return;
-    sscanf(content.c_str() + start + 1, "%f, %f, %f", &col[0], &col[1], &col[2]);
+    size_t end = content.find("]", start);
+    if(start == std::string::npos || end == std::string::npos) return;
+    std::string arr = content.substr(start+1, end-start-1);
+    std::stringstream ss(arr);
+    std::string seg;
+    int idx=0;
+    while(std::getline(ss, seg, ',') && idx < 3) {
+        try { col[idx++] = std::stof(seg); } catch(...) {}
+    }
 }
 void ParseColor4(const std::string& content, const std::string& key, float* col) {
     size_t pos = content.find("\"" + key + "\"");
     if (pos == std::string::npos) return;
     size_t start = content.find("[", pos);
-    if(start == std::string::npos) return;
-    sscanf(content.c_str() + start + 1, "%f, %f, %f, %f", &col[0], &col[1], &col[2], &col[3]);
+    size_t end = content.find("]", start);
+    if(start == std::string::npos || end == std::string::npos) return;
+    std::string arr = content.substr(start+1, end-start-1);
+    std::stringstream ss(arr);
+    std::string seg;
+    int idx=0;
+    while(std::getline(ss, seg, ',') && idx < 4) {
+        try { col[idx++] = std::stof(seg); } catch(...) {}
+    }
 }
 void ParseIntArray(const std::string& content, const std::string& key, std::set<uint32_t>& outSet) {
     size_t pos = content.find("\"" + key + "\"");
@@ -437,6 +563,48 @@ void ParseIntArray(const std::string& content, const std::string& key, std::set<
     }
 }
 
+void ParseGradientStops(const std::string& content, const std::string& key, ImGG::GradientWidget& widget) {
+    size_t pos = content.find("\"" + key + "\"");
+    if (pos == std::string::npos) return;
+    size_t start = content.find("[", pos);
+    if (start == std::string::npos) return;
+
+    int brackets = 0;
+    size_t aEnd = start;
+    for(size_t i=start; i<content.length(); i++) {
+        if(content[i] == '[') brackets++;
+        else if(content[i] == ']') {
+            brackets--;
+            if(brackets == 0) { aEnd = i; break; }
+        }
+    }
+    
+    widget.gradient().clear();
+    std::string block = content.substr(start, aEnd - start + 1);
+    
+    size_t bCur = 0;
+    while(true) {
+        size_t bObj = block.find("{", bCur);
+        if(bObj == std::string::npos) break;
+        size_t bObjClose = block.find("}", bObj);
+        if(bObjClose == std::string::npos) break;
+        
+        std::string item = block.substr(bObj, bObjClose - bObj + 1);
+        float p = ParseFloatValue(item, "p", 0.0f);
+        float c[4] = {1,1,1,1};
+        ParseColor4(item, "c", c);
+        
+        widget.gradient().add_mark(ImGG::Mark(ImGG::RelativePosition(p), ImVec4(c[0], c[1], c[2], c[3])));
+        
+        bCur = bObjClose + 1;
+    }
+    
+    if(widget.gradient().get_marks().empty()) {
+        widget.gradient().add_mark(ImGG::Mark(ImGG::RelativePosition(0.0f), ImVec4(0,0,0,1)));
+        widget.gradient().add_mark(ImGG::Mark(ImGG::RelativePosition(1.0f), ImVec4(1,1,1,1)));
+    }
+}
+
 void LoadStyle(const std::string& path) {
     std::ifstream in(path);
     if (!in.is_open()) return;
@@ -448,16 +616,21 @@ void LoadStyle(const std::string& path) {
     g_Padding = ParseIntValue(c, "padding", g_Padding);
     g_AtlasSize = ParseIntValue(c, "atlasSize", g_AtlasSize);
     
-    ParseColor3(c, "fillColor", g_FillColor);
+    ParseColor4(c, "fillColor", g_FillColor);
     g_EnableGradient = ParseBoolValue(c, "enableGradient", g_EnableGradient);
-    ParseColor3(c, "gradientStart", g_GradientStart);
-    ParseColor3(c, "gradientEnd", g_GradientEnd);
+    
+    g_FillGradientType = ParseIntValue(c, "fillGradientType", 0);
+    g_FillGradientAngle = ParseFloatValue(c, "fillGradientAngle", 90.0f);
+    ParseGradientStops(c, "fillGradientStops", g_FillGradientWidget);
     
     g_EnableStroke = ParseBoolValue(c, "enableStroke", false);
-    g_EnableStrokeGradient = ParseBoolValue(c, "enableStrokeGradient", false);
     g_StrokeWidth = ParseFloatValue(c, "strokeWidth", 2.0f);
-    ParseColor3(c, "strokeColor", g_StrokeColor);
-    ParseColor3(c, "strokeColorBottom", g_StrokeColorBottom);
+    ParseColor4(c, "strokeColor", g_StrokeColor);
+    
+    g_EnableStrokeGradient = ParseBoolValue(c, "enableStrokeGradient", false);
+    g_StrokeGradientType = ParseIntValue(c, "strokeGradientType", 0);
+    g_StrokeGradientAngle = ParseFloatValue(c, "strokeGradientAngle", 90.0f);
+    ParseGradientStops(c, "strokeGradientStops", g_StrokeGradientWidget);
     
     g_EnableShadow = ParseBoolValue(c, "enableShadow", g_EnableShadow);
     g_ShadowOffsetX = ParseIntValue(c, "shadowOffsetX", g_ShadowOffsetX);
@@ -603,31 +776,46 @@ AtlasSettings ConstructSettings() {
     settings.hintingMode = g_HintingMode;
     
     // Fill
-    settings.enableGradient = g_EnableGradient;
+    // Fill
+    settings.fillColor[0] = (uint8_t)(g_FillColor[0] * 255);
+    settings.fillColor[1] = (uint8_t)(g_FillColor[1] * 255);
+    settings.fillColor[2] = (uint8_t)(g_FillColor[2] * 255);
+    settings.fillColor[3] = (uint8_t)(g_FillColor[3] * 255);
+    
+    settings.fillGradient.enabled = g_EnableGradient;
+    settings.fillGradient.type = (GradientType)g_FillGradientType;
+    settings.fillGradient.angle = g_FillGradientAngle;
     if (g_EnableGradient) {
-        settings.colorTop[0] = (uint8_t)(g_GradientStart[0] * 255);
-        settings.colorTop[1] = (uint8_t)(g_GradientStart[1] * 255);
-        settings.colorTop[2] = (uint8_t)(g_GradientStart[2] * 255);
-        
-        settings.colorBottom[0] = (uint8_t)(g_GradientEnd[0] * 255);
-        settings.colorBottom[1] = (uint8_t)(g_GradientEnd[1] * 255);
-        settings.colorBottom[2] = (uint8_t)(g_GradientEnd[2] * 255);
-    } else {
-        settings.colorTop[0] = settings.colorBottom[0] = (uint8_t)(g_FillColor[0] * 255);
-        settings.colorTop[1] = settings.colorBottom[1] = (uint8_t)(g_FillColor[1] * 255);
-        settings.colorTop[2] = settings.colorBottom[2] = (uint8_t)(g_FillColor[2] * 255);
+        auto marks = g_FillGradientWidget.gradient().get_marks();
+        for (const auto& m : marks) {
+            GradientStop s;
+            s.position = m.position.get();
+            s.color[0] = m.color.x; s.color[1] = m.color.y; s.color[2] = m.color.z; s.color[3] = m.color.w;
+            settings.fillGradient.stops.push_back(s);
+        }
     }
 
     // Stroke
     settings.enableStroke = g_EnableStroke;
-    settings.enableStrokeGradient = g_EnableStrokeGradient;
     settings.strokeWidth = g_StrokeWidth;
+    settings.strokePosition = g_StrokePosition;
     settings.strokeColor[0] = (uint8_t)(g_StrokeColor[0] * 255);
     settings.strokeColor[1] = (uint8_t)(g_StrokeColor[1] * 255);
     settings.strokeColor[2] = (uint8_t)(g_StrokeColor[2] * 255);
-    settings.strokeColorBottom[0] = (uint8_t)(g_StrokeColorBottom[0] * 255);
-    settings.strokeColorBottom[1] = (uint8_t)(g_StrokeColorBottom[1] * 255);
-    settings.strokeColorBottom[2] = (uint8_t)(g_StrokeColorBottom[2] * 255);
+    settings.strokeColor[3] = (uint8_t)(g_StrokeColor[3] * 255);
+    
+    settings.strokeGradient.enabled = g_EnableStrokeGradient;
+    settings.strokeGradient.type = (GradientType)g_StrokeGradientType;
+    settings.strokeGradient.angle = g_StrokeGradientAngle;
+    if (g_EnableStrokeGradient) {
+         auto marks = g_StrokeGradientWidget.gradient().get_marks();
+         for(const auto& m : marks) {
+             GradientStop s;
+             s.position = m.position.get();
+             s.color[0] = m.color.x; s.color[1] = m.color.y; s.color[2] = m.color.z; s.color[3] = m.color.w;
+             settings.strokeGradient.stops.push_back(s);
+         }
+    }
 
     // Shadow
     settings.enableShadow = g_EnableShadow;
@@ -1240,35 +1428,50 @@ int main(int, char**) {
             ImGui::Text("Fill");
             if (ImGui::Button("Reset Fill")) { 
                  g_EnableGradient = false; 
-                 g_FillColor[0]=1; g_FillColor[1]=1; g_FillColor[2]=1;
+                 g_FillColor[0]=1.0f; g_FillColor[1]=1.0f; g_FillColor[2]=1.0f; g_FillColor[3]=1.0f;
                  UpdatePreview(g_InputText);
             }
             if (ImGui::Checkbox("Gradient", &g_EnableGradient)) {
                 UpdatePreview(g_InputText);
             }
             if (!g_EnableGradient) {
-                if (ImGui::ColorEdit3("Color", g_FillColor)) {
+                if (ImGui::ColorEdit4("Color", g_FillColor)) {
                     UpdatePreview(g_InputText);
                 }
             } else {
-                if (ImGui::ColorEdit3("Start", g_GradientStart)) UpdatePreview(g_InputText);
-                if (ImGui::ColorEdit3("End", g_GradientEnd)) UpdatePreview(g_InputText);
+                if (ImGui::Combo("Type##Fill", &g_FillGradientType, "Linear\0Radial\0")) UpdatePreview(g_InputText);
+                if (KnobAngle("Angle##Fill", &g_FillGradientAngle, -180.0f, 180.0f)) UpdatePreview(g_InputText);
+                
+                ImGui::Dummy(ImVec2(0, 5));
+                if (g_FillGradientWidget.widget("Fill Gradient")) {
+                    UpdatePreview(g_InputText);
+                }
+                ImGui::Dummy(ImVec2(0, 10));
             }
 
             // Effects
             ImGui::Separator();
-            ImGui::Text("Effects: Outline");
-            if (ImGui::Checkbox("Outline", &g_EnableStroke)) {
-                UpdatePreview(g_InputText);
-            }
-            if (g_EnableStroke) {
-                if (ImGui::SliderFloat("Width", &g_StrokeWidth, 0.0f, 10.0f)) UpdatePreview(g_InputText);
+            if (ImGui::CollapsingHeader("Effects: Outline")) {
+                if (ImGui::Checkbox("Enable Outline", &g_EnableStroke)) {
+                    UpdatePreview(g_InputText);
+                }
+                if (g_EnableStroke) {
+                    if (ImGui::SliderFloat("Width", &g_StrokeWidth, 0.0f, 10.0f)) UpdatePreview(g_InputText);
+                if (ImGui::Combo("Position##Stroke", &g_StrokePosition, "Outside\0Center\0Inside\0")) UpdatePreview(g_InputText);
                 if (ImGui::Checkbox("Stroke Gradient", &g_EnableStrokeGradient)) UpdatePreview(g_InputText);
-                if (!g_EnableStrokeGradient) {
-                    if (ImGui::ColorEdit3("Line Color", g_StrokeColor)) UpdatePreview(g_InputText);
-                } else {
-                    if (ImGui::ColorEdit3("Line Color (Top)", g_StrokeColor)) UpdatePreview(g_InputText);
-                    if (ImGui::ColorEdit3("Line Color (Bottom)", g_StrokeColorBottom)) UpdatePreview(g_InputText);
+                    
+                    if (!g_EnableStrokeGradient) {
+                         if (ImGui::ColorEdit4("Line Color", g_StrokeColor)) UpdatePreview(g_InputText);
+                    } else {
+                         if (ImGui::Combo("Type##Stroke", &g_StrokeGradientType, "Linear\0Radial\0")) UpdatePreview(g_InputText);
+                         if (KnobAngle("Angle##Stroke", &g_StrokeGradientAngle, -180.0f, 180.0f)) UpdatePreview(g_InputText);
+
+                         ImGui::Dummy(ImVec2(0, 5));
+                         if (g_StrokeGradientWidget.widget("Stroke Gradient")) {
+                             UpdatePreview(g_InputText);
+                         }
+                         ImGui::Dummy(ImVec2(0, 10));
+                    }
                 }
             }
 

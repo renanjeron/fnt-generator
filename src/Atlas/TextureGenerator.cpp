@@ -139,7 +139,9 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
         if (rc.body.width == 0 && rc.body.height == 0 && rc.body.advance == 0 && code != 32 && code != 160) continue;
 
         if (settings.enableStroke && settings.strokeWidth > 0) {
-            rc.outline = fontManager.RenderGlyphStroke(code, settings.strokeWidth, flags);
+            float effWidth = settings.strokeWidth;
+            if (settings.strokePosition == 1) effWidth *= 0.5f; // Center: Half width (drawn on top/bottom effective)
+            rc.outline = fontManager.RenderGlyphStroke(code, effWidth, flags);
         } else {
             rc.outline = rc.body; 
         }
@@ -269,12 +271,12 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
                     
                     BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
                                            drawRefX - blur, drawRefY - blur, shRes, 
-                                           settings.shadowColor, false);
+                                           settings.shadowColor, nullptr);
                  }
              } else {
                  BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
                                         drawRefX, drawRefY, rc.outline, 
-                                        settings.shadowColor, false);
+                                        settings.shadowColor, nullptr);
              }
         }
         
@@ -287,22 +289,24 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
              int bodyY = penY - rc.body.bearingY;
              
              uint8_t shadowCol[4] = {0,0,0,80};
-             BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX - hOffX, bodyY - hOffY, rc.body, shadowCol, false);
+             BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX - hOffX, bodyY - hOffY, rc.body, shadowCol, nullptr);
              
              uint8_t highCol[4] = {settings.bevelColor[0], settings.bevelColor[1], settings.bevelColor[2], 100};
-             BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX + hOffX, bodyY + hOffY, rc.body, highCol, false);
+             BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX + hOffX, bodyY + hOffY, rc.body, highCol, nullptr);
         }
 
         // C. Stroke
-        if (settings.enableStroke && settings.strokeWidth > 0) {
-            uint8_t strColor[4] = {settings.strokeColor[0], settings.strokeColor[1], settings.strokeColor[2], 255};
-            BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
-                                   penX + rc.outline.bearingX, penY - rc.outline.bearingY, rc.outline, 
-                                   strColor, settings.enableStrokeGradient, settings.strokeColorBottom);
-        }
-        
-        // D. Body
-        {
+        // Composition (Body & Stroke)
+        auto DrawStroke = [&]() {
+            if (settings.enableStroke && settings.strokeWidth > 0) {
+                 bool mask = (settings.strokePosition == 2); // Inside
+                 BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
+                                       penX + rc.outline.bearingX, penY - rc.outline.bearingY, rc.outline, 
+                                       settings.strokeColor, &settings.strokeGradient, mask);
+            }
+        };
+
+        auto DrawBody = [&]() {
             int bodyX = penX + rc.body.bearingX;
             int bodyY = penY - rc.body.bearingY;
             
@@ -311,10 +315,17 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
                                             bodyX, bodyY, rc.body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor);
             }
             
-            uint8_t topColor[4] = {settings.colorTop[0], settings.colorTop[1], settings.colorTop[2], 255};
             BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
                                    bodyX, bodyY, rc.body, 
-                                   topColor, settings.enableGradient, settings.colorBottom);
+                                   settings.fillColor, &settings.fillGradient);
+        };
+
+        if (settings.strokePosition == 0) { // Outside
+            DrawStroke();
+            DrawBody();
+        } else { // Center or Inside
+            DrawBody();
+            DrawStroke();
         }
         
         GlyphPlacement gp;
@@ -516,7 +527,7 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
                 float blurAlpha = settings.shadowColor[3] / (float)(blurLayers);
                 uint8_t shCol[4] = {settings.shadowColor[0], settings.shadowColor[1], settings.shadowColor[2], (uint8_t)blurAlpha};
                 int off = (blur - blurLayers/2);
-                BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, shX + off, shY + off, rc.outline, shCol, false);
+                BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, shX + off, shY + off, rc.outline, shCol, nullptr);
             }
         }
         
@@ -527,40 +538,27 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
             int hOffY = (int)(sin(angleRad) * settings.bevelDistance);
             uint8_t shCol[4] = {0,0,0,80};
             uint8_t hiCol[4] = {settings.bevelColor[0], settings.bevelColor[1], settings.bevelColor[2], 100};
-            BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX - hOffX, bodyY - hOffY, rc.body, shCol, false);
-            BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX + hOffX, bodyY + hOffY, rc.body, hiCol, false);
+            BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX - hOffX, bodyY - hOffY, rc.body, shCol, nullptr);
+            BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX + hOffX, bodyY + hOffY, rc.body, hiCol, nullptr);
         }
 
         // Stroke (Real Outline)
         if (settings.enableStroke && settings.strokeWidth > 0) {
-            uint8_t strCol[4] = {settings.strokeColor[0], settings.strokeColor[1], settings.strokeColor[2], 255};
-            BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, outlineX, outlineY, rc.outline, strCol, settings.enableStrokeGradient, settings.strokeColorBottom);
+            BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, outlineX, outlineY, rc.outline, settings.strokeColor, &settings.strokeGradient);
         }
         
-        // Body
-        uint8_t topCol[4] = {settings.colorTop[0], settings.colorTop[1], settings.colorTop[2], 255};
+        // Body (Fill)
         
         if (settings.enableInnerGlow && settings.innerGlowSize > 0) {
             BitmapUtils::DrawInnerGlow(result.pixels, result.width, result.height, bodyX, bodyY, rc.body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor);
         }
         
-        BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX, bodyY, rc.body, topCol, settings.enableGradient, settings.colorBottom);
+        BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX, bodyY, rc.body, settings.fillColor, &settings.fillGradient);
 
         currentPenX += rc.advance + settings.globalXAdvance;
     }
     return result;
 }
 
-// BlendGlyph wrapper for compatibility if needed?
-// No, I replaced usage with BitmapUtils::BlitGlyph inside GenerateTextPreview above.
-// So I can remove BlendGlyph method completely!
-// Remove declaration from Header too?
-void TextureGenerator::BlendGlyph(std::vector<unsigned char>& atlasPixels, int atlasWidth, int x, int y, const GlyphBitmap& glyph, uint8_t r, uint8_t g, uint8_t b, uint8_t a, bool useGradient, const AtlasSettings* settings) {
-    // Deprecated. Should not be called.
-    // If called, forward:
-    uint8_t colTop[4] = {r, g, b, a};
-    const uint8_t* bot = settings ? settings->colorBottom : nullptr;
-    int h = (int)atlasPixels.size() / (atlasWidth * 4);
-    BitmapUtils::BlitGlyph(atlasPixels, atlasWidth, h, x, y, glyph, colTop, useGradient, bot);
-}
+// End
 

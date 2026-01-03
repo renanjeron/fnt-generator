@@ -2,9 +2,10 @@ cmake_minimum_required(VERSION 3.20)
 
 # Fix for dependencies (like FreeType) using older CMake policies
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW) # Start allowing option() to override cache variables
+cmake_policy(SET CMP0169 OLD) # Suppress FetchContent_Populate deprecation warning
 set(CMAKE_POLICY_VERSION_MINIMUM "3.5")
 
-project(FntGenerator VERSION 1.0.1 LANGUAGES CXX)
+project(FntGenerator VERSION 1.0.4 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -58,6 +59,18 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(stb)
 
+# 6. imgui_gradient
+FetchContent_Declare(
+    imgui_gradient
+    GIT_REPOSITORY https://github.com/Coollab-Art/imgui_gradient.git
+    GIT_TAG        main
+    PATCH_COMMAND  ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/patches/ColorRGBA.hpp ${CMAKE_SOURCE_DIR}/patches/internal.hpp <SOURCE_DIR>/src/
+)
+FetchContent_GetProperties(imgui_gradient)
+if(NOT imgui_gradient_POPULATED)
+    FetchContent_Populate(imgui_gradient)
+endif()
+
 # --- Source Files ---
 
 # Create source structure if not exists, but CMake usually expects files to exist.
@@ -73,6 +86,18 @@ list(APPEND IMGUI_SOURCES
     ${IMGUI_DIR}/imgui_widgets.cpp
     ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
     ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+)
+
+# imgui_gradient Sources
+list(APPEND IMGUI_GRADIENT_SOURCES
+    ${imgui_gradient_SOURCE_DIR}/src/Gradient.cpp
+    ${imgui_gradient_SOURCE_DIR}/src/GradientWidget.cpp
+    ${imgui_gradient_SOURCE_DIR}/src/HoverChecker.cpp
+    ${imgui_gradient_SOURCE_DIR}/src/RelativePosition.cpp
+    ${imgui_gradient_SOURCE_DIR}/src/color_conversions.cpp
+    ${imgui_gradient_SOURCE_DIR}/src/extra_widgets.cpp
+    ${imgui_gradient_SOURCE_DIR}/src/imgui_draw.cpp
+    ${imgui_gradient_SOURCE_DIR}/src/maybe_disabled.cpp
 )
 
 # PlatformUtils
@@ -92,6 +117,7 @@ add_executable(FntGenerator WIN32
     src/Utils/BitmapUtils.cpp
     ${IMGUI_SOURCES}
     ${PLATFORM_SOURCES}
+    ${IMGUI_GRADIENT_SOURCES}
 )
 
 # --- Includes & Linking ---
@@ -101,7 +127,10 @@ target_include_directories(FntGenerator PRIVATE
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
     ${stb_SOURCE_DIR}
+    ${imgui_gradient_SOURCE_DIR}/include
 )
+
+target_compile_definitions(FntGenerator PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
 
 target_link_libraries(FntGenerator PRIVATE
     glfw
@@ -133,8 +162,8 @@ if(APPLE)
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_BUNDLE_NAME "Fnt Generator"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.renanjeron.fntgenerator"
-        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.1"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.1"
+        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.4"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.4"
         MACOSX_BUNDLE_COPYRIGHT "Copyright © 2026"
     )
 endif()

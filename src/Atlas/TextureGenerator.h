@@ -3,6 +3,7 @@
 #include <string>
 #include <cstdint>
 #include "../Font/FontManager.h"
+#include "../Utils/BitmapUtils.h"
 
 struct GlyphPlacement {
     uint32_t charCode;
@@ -33,6 +34,9 @@ struct AtlasResult {
     int base = 0; // Ascender
 };
 
+// --- Structures ---
+// GradientStop, GradientType, GradientData are now in BitmapUtils.h
+
 struct AtlasSettings {
     int fontSize = 72;
     int padding = 5;
@@ -44,26 +48,20 @@ struct AtlasSettings {
     int hintingMode = 0;
 
     // Fill
-    bool enableGradient = false;
-    uint8_t colorTop[3] = { 255, 255, 255 }; // R,G,B
-    uint8_t colorBottom[3] = { 255, 255, 255 }; // R,G,B
+    uint8_t fillColor[4] = { 255, 255, 255, 255 }; // Solid color fallback
+    GradientData fillGradient;
 
     // Stroke
     bool enableStroke = false;
-    bool enableStrokeGradient = false;
     float strokeWidth = 0.0f;
-    uint8_t strokeColor[3] = { 0, 0, 0 };
-    uint8_t strokeColorBottom[3] = { 0, 0, 0 };
+    int strokePosition = 0; // 0=Outside, 1=Center, 2=Inside
+    uint8_t strokeColor[4] = { 0, 0, 0, 255 }; // Solid stroke
+    GradientData strokeGradient;
 
     // Shadow
     bool enableShadow = false;
-    int shadowDistance = 0;
-    int shadowAngle = 45; // Degrees? Or just Offset X/Y? Web app has "Angle" + "Distance".
-    // Let's use Offset X/Y for simplicity in impl or calculate.
-    // Web app: Angle + Distance.
-    // We can convert Angle/Dist to OffsetX/OffsetY in Generator.
-    // For now let's store OffsetX/OffsetY directly or Angle/Dist. Let's stick to web app params.
-    // Actually, let's keep it simple: OffsetX, OffsetY.
+    int shadowDistance = 0; // Legacy unused? kept just in case but we use offset
+    int shadowAngle = 45;
     int shadowOffsetX = 5;
     int shadowOffsetY = 5;
     int shadowBlur = 0; // Gaussian blur radius
@@ -103,6 +101,6 @@ public:
     static AtlasResult GenerateTextPreview(FontManager& fontManager, const std::string& text, const AtlasSettings& settings);
 
 private:
-    // Helper to blend a glyph into the atlas buffer
-    static void BlendGlyph(std::vector<unsigned char>& atlasPixels, int atlasWidth, int x, int y, const GlyphBitmap& glyph, uint8_t r, uint8_t g, uint8_t b, uint8_t a, bool useGradient, const AtlasSettings* settings);
+private:
+    // Helper to blend: Removed/Deprecated. Use BitmapUtils::BlitGlyph directly.
 };
