@@ -4,5 +4,5 @@
 
 class Exporter {
 public:
-    static bool ExportAtlasToDisk(const AtlasResult& atlas, const std::string& destinationFolder, const std::string& fileNameBase);
+    static bool ExportAtlasToDisk(const AtlasResult& atlas, const std::string& destinationFolder, const std::string& fileNameBase, int format = 0, const std::string& extension = ".fnt");
 };

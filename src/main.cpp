@@ -10,6 +10,7 @@
 #include <fstream>
 #include <sstream>
 #include <set>
+#include <filesystem>
 
 #include "Utils/PlatformUtils.h"
 #include "Font/FontManager.h"
@@ -21,7 +22,7 @@
 static std::vector<Utils::FontInfo> g_SystemFonts;
 static FontManager g_FontManager;
 static int g_SelectedFontIndex = -1;
-static char g_InputText[1024] = "Entrar";
+static char g_InputText[1024] = "Hello Everyone";
 static int g_FontSize = 72;
 static int g_Padding = 5;
 
@@ -66,7 +67,10 @@ static char g_FontSearch[128] = ""; // Search filter
 // ... (Previous variables)
 static float g_PreviewBgColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f }; // Default Transparent
 static char g_ExportFilename[128] = "my_font";
+static int g_ExportFormat = 0; // 0=XML, 1=Text, 2=Binary
 static bool g_UseExtendedCharset = false;
+static bool g_UseCustomGlyphs = false;
+static char g_CustomGlyphsText[4096] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!№;%:?*()_+-=.,/|\"'@#$^&{}[]";
 static std::vector<UnicodeBlock> g_UnicodeBlocks = UNICODE_BLOCKS; // Mutable copy
 static GLuint g_CheckerTexture = 0;
 // Atlas Interaction
@@ -82,6 +86,11 @@ static bool g_IsPanning = false;
 static float g_TextZoom = 1.0f;
 static ImVec2 g_TextPan = { 0, 0 };
 static bool g_IsPanningText = false;
+
+// Char Adjustments
+static int g_GlobalXAdvance = 0;
+static int g_GlobalXOffset = 0;
+static int g_GlobalYOffset = 0;
 
 // Favorite fonts system
 static std::set<std::string> g_FavoriteFonts;
@@ -151,6 +160,53 @@ void SaveRecentStyles() {
     }
 }
 
+// --- Custom Glyphs Presets ---
+std::string GetCustomGlyphsDir() {
+    std::string dir = Utils::GetConfigDir() + "/customglyphs";
+    if (!std::filesystem::exists(dir)) std::filesystem::create_directories(dir);
+    return dir;
+}
+
+std::vector<std::string> GetCustomGlyphsPresets() {
+    std::vector<std::string> presets;
+    std::string dir = GetCustomGlyphsDir();
+    if (!std::filesystem::exists(dir)) return presets;
+    
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".txt") {
+            presets.push_back(entry.path().stem().string());
+        }
+    }
+    return presets;
+}
+
+void SaveCustomGlyphsPreset(const std::string& name, const std::string& content) {
+    if (name.empty()) return;
+    std::string path = GetCustomGlyphsDir() + "/" + name + ".txt";
+    std::ofstream out(path);
+    if (out.is_open()) {
+        out << content;
+    }
+}
+
+void DeleteCustomGlyphsPreset(const std::string& name) {
+    if (name.empty()) return;
+    std::string path = GetCustomGlyphsDir() + "/" + name + ".txt";
+    if (std::filesystem::exists(path)) {
+        std::filesystem::remove(path);
+    }
+}
+
+std::string LoadCustomGlyphsPreset(const std::string& name) {
+    std::string path = GetCustomGlyphsDir() + "/" + name + ".txt";
+    std::ifstream in(path);
+    if (!in.is_open()) return "";
+    
+    std::stringstream buffer;
+    buffer << in.rdbuf();
+    return buffer.str();
+}
+
 void AddRecentStyle(std::string path) {
     if (path.empty()) return;
     // Remove if already exists to move to top
@@ -169,27 +225,37 @@ void RemoveRecentStyle(std::string path) {
 }
 
 // --- Window & Style Persistence ---
-void SaveWindowConfig(int w, int h) {
+// --- Window & Style Persistence ---
+void SaveWindowConfig(int x, int y, int w, int h, bool ssaa) {
     std::string path = Utils::GetConfigDir() + "/window.cfg";
     std::string tmpPath = path + ".tmp";
     std::ofstream out(tmpPath);
     if (out.is_open()) {
-        out << w << " " << h << " " << (g_PreviewSSAA ? 1 : 0);
+        out << w << " " << h << " " << (ssaa ? 1 : 0) << " " << x << " " << y;
         out.close();
         std::remove(path.c_str());
         std::rename(tmpPath.c_str(), path.c_str());
     }
 }
 
-void LoadWindowConfig(int& w, int& h) {
+void LoadWindowConfig(int& x, int& y, int& w, int& h, bool& ssaa) {
+    // Defaults matching center-ish usually, or rely on OS
+    x = 100; y = 100; w = 1280; h = 720; ssaa = false;
+
     std::ifstream in(Utils::GetConfigDir() + "/window.cfg");
     if (in.is_open()) {
-        in >> w >> h;
-        if (w < 800) w = 800; 
-        if (h < 600) h = 600;
-        int ssaa = 0;
-        if (in >> ssaa) g_PreviewSSAA = (ssaa == 1);
+        int tempSSAA = 0;
+        in >> w >> h >> tempSSAA;
+        ssaa = (tempSSAA == 1);
+        
+        // Try reading pos if available (backward compat: check valid read)
+        if (!(in >> x >> y)) {
+            x = 100; y = 100; // Reset if not found
+        }
     }
+    
+    if (w < 800) w = 800;
+    if (h < 600) h = 600;
 }
 
 // Simple JSON helpers
@@ -257,6 +323,25 @@ void SaveStyle(const std::string& path) {
     }
     out << "],\n";
     
+    // Custom Glyphs
+    out << "  \"useCustomGlyphs\": " << (g_UseCustomGlyphs ? "true" : "false") << ",\n";
+    std::string escCustom;
+    for(char c : std::string(g_CustomGlyphsText)) {
+        if(c == '\\') escCustom += "\\\\";
+        else if(c == '"') escCustom += "\\\"";
+        else if(c == '\n') escCustom += "\\n";
+        else escCustom += c;
+    }
+    out << "  \"customGlyphsText\": \"" << escCustom << "\",\n";
+    
+    // Export Format
+    out << "  \"exportFormat\": " << g_ExportFormat << ",\n";
+
+    // Char Adjustments
+    out << "  \"globalXAdvance\": " << g_GlobalXAdvance << ",\n";
+    out << "  \"globalXOffset\": " << g_GlobalXOffset << ",\n";
+    out << "  \"globalYOffset\": " << g_GlobalYOffset << ",\n";
+
     // Blocks
     out << "  \"blocks\": [\n";
     bool first = true;
@@ -409,6 +494,27 @@ void LoadStyle(const std::string& path) {
     g_ExcludedGlyphs.clear();
     ParseIntArray(c, "excludedGlyphs", g_ExcludedGlyphs);
     
+    g_UseCustomGlyphs = ParseBoolValue(c, "useCustomGlyphs", false);
+    std::string customText = ParseStringValue(c, "customGlyphsText");
+    if(!customText.empty()) {
+        // Simple unescape for newline
+        std::string unesc;
+        for(size_t i=0; i<customText.size(); i++) {
+            if(customText[i] == '\\' && i+1 < customText.size() && customText[i+1] == 'n') {
+                unesc += '\n'; i++;
+            } else {
+                unesc += customText[i];
+            }
+        }
+        strncpy(g_CustomGlyphsText, unesc.c_str(), sizeof(g_CustomGlyphsText));
+    }
+    
+    g_ExportFormat = ParseIntValue(c, "exportFormat", 0);
+
+    g_GlobalXAdvance = ParseIntValue(c, "globalXAdvance", 0);
+    g_GlobalXOffset = ParseIntValue(c, "globalXOffset", 0);
+    g_GlobalYOffset = ParseIntValue(c, "globalYOffset", 0);
+
     // Blocks
     for(auto& b : g_UnicodeBlocks) b.enabled = false;
     size_t blocksStart = c.find("\"blocks\"");
@@ -550,6 +656,11 @@ AtlasSettings ConstructSettings() {
     settings.innerGlowColor[1] = (uint8_t)(g_InnerGlowColor[1] * 255);
     settings.innerGlowColor[2] = (uint8_t)(g_InnerGlowColor[2] * 255);
     settings.innerGlowColor[3] = (uint8_t)(g_InnerGlowColor[3] * 255);
+    
+    // Char Adjustments
+    settings.globalXAdvance = g_GlobalXAdvance;
+    settings.globalXOffset = g_GlobalXOffset;
+    settings.globalYOffset = g_GlobalYOffset;
 
     return settings;
 }
@@ -563,8 +674,43 @@ void UpdatePreview(const char* text) {
     // 1. Generate Atlas (For Export)
     // Always uses selected Unicode blocks
     {
-        // Generate charset from selected Unicode blocks
-        std::vector<uint32_t> charset = GenerateCharsetFromBlocks(g_UnicodeBlocks);
+        // Generate charset
+        std::vector<uint32_t> charset;
+        
+        if (g_UseCustomGlyphs) {
+            // From custom text
+            std::string text(g_CustomGlyphsText);
+            // Convert to utf32 (simple check for now, assumes ascii/basic or use helper)
+            // But FontManager expects unicode code points.
+            // Let's use a simple iterator. For advanced unicode, need a proper library or helper.
+            // Assuming the util helper handles UTF-8 strings:
+            // Actually let's use a helper if available, or just iterate chars for now (ASCII/Latin-1)
+            // For full unicode support in custom text logic, we need to decode UTF-8 `g_CustomGlyphsText`
+            
+            // Minimal UTF-8 decoder lambda
+            auto decodeUtf8 = [](const char* p) -> std::vector<uint32_t> {
+                std::vector<uint32_t> res;
+                while (*p) {
+                    uint32_t c = 0;
+                    if ((*p & 0x80) == 0) { c = *p++; }
+                    else if ((*p & 0xE0) == 0xC0) { c = (*p++ & 0x1F) << 6; c |= (*p++ & 0x3F); }
+                    else if ((*p & 0xF0) == 0xE0) { c = (*p++ & 0x0F) << 12; c |= (*p++ & 0x3F) << 6; c |= (*p++ & 0x3F); }
+                    else if ((*p & 0xF8) == 0xF0) { c = (*p++ & 0x07) << 18; c |= (*p++ & 0x3F) << 12; c |= (*p++ & 0x3F) << 6; c |= (*p++ & 0x3F); }
+                    else { p++; continue; } // Invalid
+                    res.push_back(c);
+                }
+                return res;
+            };
+            
+            charset = decodeUtf8(g_CustomGlyphsText);
+            
+            // Remove duplicates
+            std::sort(charset.begin(), charset.end());
+            charset.erase(std::unique(charset.begin(), charset.end()), charset.end());
+            
+        } else {
+             charset = GenerateCharsetFromBlocks(g_UnicodeBlocks);
+        }
         
         // If no blocks selected, fallback to Basic Latin to prevent empty atlas errors
         // or confusion, unless intentional. Let's ensure at least ASCII is present if list empty.
@@ -671,13 +817,17 @@ int main(int, char**) {
     // glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);  // Not strictly required for 3.0
 #endif
 
-    // Load Window Config
-    int winW = 1280, winH = 720;
-    LoadWindowConfig(winW, winH);
+    // Load Window Config from imgui.ini (geometry) and window.cfg (custom)
+    int winW = 1280, winH = 720, winX = 100, winY = 100;
+    LoadWindowConfig(winX, winY, winW, winH, g_PreviewSSAA);
 
-    GLFWwindow* window = glfwCreateWindow(winW, winH, "Font Exporter Native", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(winW, winH, "Fnt Generator", NULL, NULL);
     if (window == NULL)
         return 1;
+        
+    // Set Position if available
+    glfwSetWindowPos(window, winX, winY);
+    
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
 
@@ -685,6 +835,41 @@ int main(int, char**) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; 
+
+    // Load Fonts with CJK Support
+    ImVector<ImWchar> ranges;
+    ImFontGlyphRangesBuilder builder;
+    builder.AddRanges(io.Fonts->GetGlyphRangesDefault()); // Latin
+    builder.AddRanges(io.Fonts->GetGlyphRangesChineseFull()); // Chinese
+    builder.AddRanges(io.Fonts->GetGlyphRangesJapanese()); // Japanese
+    builder.AddRanges(io.Fonts->GetGlyphRangesCyrillic()); // Cyrillic
+    builder.AddText("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{}|;:',.<>/?`~"); // Ensure basics
+    builder.BuildRanges(&ranges);
+
+    // Try to load a font that covers most of these (Microsoft YaHei is good for CJK on Windows)
+    // Fallback order: Microsoft YaHei -> Arial -> Default
+    bool fontLoaded = false;
+    
+    #ifdef _WIN32
+    const char* fontPath = "C:\\Windows\\Fonts\\msyh.ttc"; // Microsoft YaHei
+    if (std::filesystem::exists(fontPath)) {
+        io.Fonts->AddFontFromFileTTF(fontPath, 18.0f, NULL, ranges.Data);
+        fontLoaded = true;
+    } else {
+        fontPath = "C:\\Windows\\Fonts\\Arial.ttf";
+        if (std::filesystem::exists(fontPath)) {
+            io.Fonts->AddFontFromFileTTF(fontPath, 18.0f, NULL, ranges.Data);
+            fontLoaded = true;
+        }
+    }
+    #endif
+
+    if (!fontLoaded) {
+        io.Fonts->AddFontDefault(); 
+        // Note: Default font doesn't support CJK. 
+        // If on Linux/Mac, user might see ???? for CJK unless we load a specific font there too.
+    }
+    io.Fonts->Build(); 
 
     ImGui::StyleColorsDark();
 
@@ -713,25 +898,25 @@ int main(int, char**) {
         if (ImGui::BeginMainMenuBar()) {
             menuHeight = ImGui::GetWindowSize().y;
             if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem("Export Style...")) {
-                     std::string file = Utils::SaveFileDialog("JSON Style\0*.json\0", "style.json");
+                if (ImGui::MenuItem("Import Project...")) {
+                     std::string file = Utils::PickFileDialog("JSON Project\0*.json\0");
+                     if (!file.empty()) {
+                         LoadStyle(file);
+                         AddRecentStyle(file);
+                     }
+                }
+                if (ImGui::MenuItem("Save Project...")) {
+                     std::string file = Utils::SaveFileDialog("JSON Project\0*.json\0", "project.json");
                      if (!file.empty()) {
                          if(file.find(".json") == std::string::npos) file += ".json";
                          SaveStyle(file);
                          AddRecentStyle(file);
                      }
                 }
-                if (ImGui::MenuItem("Import Style...")) {
-                     std::string file = Utils::PickFileDialog("JSON Style\0*.json\0");
-                     if (!file.empty()) {
-                         LoadStyle(file);
-                         AddRecentStyle(file);
-                     }
-                }
                 
                 ImGui::Separator();
                 
-                if (ImGui::BeginMenu("Recent Styles")) {
+                if (ImGui::BeginMenu("Recent Projects")) {
                     if(g_RecentStyles.empty()) {
                         ImGui::MenuItem("No recent files", nullptr, false, false);
                     } else {
@@ -893,17 +1078,142 @@ int main(int, char**) {
                 
                 ImGui::Separator();
                 
-                // Scrollable list of blocks
-                ImGui::BeginChild("BlocksList", ImVec2(0, 200), true);
-                for (auto& block : g_UnicodeBlocks) {
-                    if (ImGui::Checkbox(block.name.c_str(), &block.enabled)) {
+                // Unicode Blocks & Custom Glyphs
+                ImGui::Separator();
+                if (ImGui::Checkbox("Custom Glyphs", &g_UseCustomGlyphs)) {
+                     UpdatePreview(g_InputText);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Reset")) {
+                    strncpy(g_CustomGlyphsText, "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!№;%:?*()_+-=.,/|\"'@#$^&{}[]", sizeof(g_CustomGlyphsText) - 1);
+                    UpdatePreview(g_InputText);
+                }
+                ImGui::SameLine();
+                
+                // Save Button (Icon)
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                if (ImGui::Button("##SavePreset", ImVec2(24, 24))) {
+                    ImGui::OpenPopup("SavePresetPopup");
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save Preset");
+                
+                // Draw Save Icon (Floppy)
+                ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                float x = p.x + 4, y = p.y + 4; // Margin
+                ImU32 iconCol = ImGui::GetColorU32(ImGuiCol_Text);
+                draw_list->AddRect(ImVec2(x, y), ImVec2(x+16, y+16), iconCol, 1.0f); // Body
+                draw_list->AddRectFilled(ImVec2(x+4, y), ImVec2(x+12, y+5), iconCol); // Top shutter
+                draw_list->AddRectFilled(ImVec2(x+3, y+10), ImVec2(x+13, y+16), iconCol); // Sticker
+                
+                ImGui::SameLine();
+                
+                // Load Button (Icon)
+                p = ImGui::GetCursorScreenPos();
+                if (ImGui::Button("##LoadPreset", ImVec2(24, 24))) {
+                     ImGui::OpenPopup("LoadPresetPopup");
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load Preset");
+
+                // Draw Load Icon (Folder)
+                x = p.x + 4; y = p.y + 4;
+                draw_list->AddRectFilled(ImVec2(x, y+2), ImVec2(x+16, y+14), iconCol, 1.0f); // Body
+                draw_list->AddRectFilled(ImVec2(x, y), ImVec2(x+6, y+3), iconCol, 1.0f); // Tab
+                draw_list->AddLine(ImVec2(x, y+4), ImVec2(x+16, y+4), ImGui::GetColorU32(ImGuiCol_WindowBg), 1.0f); // Gap hint
+
+                if (ImGui::BeginPopup("SavePresetPopup")) {
+                    static char presetName[64] = "";
+                    ImGui::InputText("Name", presetName, 64);
+                    if (ImGui::Button("Save")) {
+                        SaveCustomGlyphsPreset(presetName, g_CustomGlyphsText);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+                    ImGui::EndPopup();
+                }
+
+                if (ImGui::BeginPopup("LoadPresetPopup")) {
+                    // Ensure minimum width
+                    ImGui::Dummy(ImVec2(200, 0));
+                    
+                    std::vector<std::string> presets = GetCustomGlyphsPresets();
+                    if (presets.empty()) {
+                        ImGui::TextDisabled("No presets found");
+                    } else {
+                        float winWidth = ImGui::GetWindowSize().x;
+                        float btnSize = 20.0f;
+                        float spacing = ImGui::GetStyle().ItemSpacing.x;
+                        
+                        for (int i = 0; i < presets.size(); ++i) {
+                            ImGui::PushID(i);
+                            std::string p = presets[i];
+                            
+                            // Selectable width = Window Width - Button Size - Scrollbar margin(approx)
+                            // Actually GetContentRegionAvail works well if window is sized.
+                            float avail = ImGui::GetContentRegionAvail().x;
+                            float btnOnlyWidth = 20.0f;
+                            float spacing = ImGui::GetStyle().ItemSpacing.x;
+                            float selWidth = avail - btnOnlyWidth - spacing;
+                            
+                            // Ensure selectable has a minimum width
+                            if (selWidth < 10) selWidth = 10;
+                            
+                            // Match height to FrameHeight for consistent alignment
+                            float itemHeight = ImGui::GetFrameHeight();
+
+                            if (ImGui::Selectable(p.c_str(), false, 0, ImVec2(selWidth, itemHeight))) {
+                                std::string content = LoadCustomGlyphsPreset(p);
+                                if (!content.empty()) {
+                                    strncpy(g_CustomGlyphsText, content.c_str(), sizeof(g_CustomGlyphsText)-1);
+                                    UpdatePreview(g_InputText);
+                                    ImGui::CloseCurrentPopup();
+                                }
+                            }
+                            
+                            ImGui::SameLine();
+                            
+                            // Delete ("X") - sized to match height
+                            if (ImGui::Button("X", ImVec2(btnOnlyWidth, itemHeight))) {
+                                DeleteCustomGlyphsPreset(p);
+                                ImGui::PopID();
+                                break; 
+                            }
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete Preset");
+                            
+                            ImGui::PopID();
+                        }
+                    }
+                    ImGui::EndPopup();
+                }
+                
+                if (g_UseCustomGlyphs) {
+                    // Only show editor if custom is checked
+                    ImGui::InputTextMultiline("##CustomGlyphs", g_CustomGlyphsText, IM_ARRAYSIZE(g_CustomGlyphsText), ImVec2(-1, 200));
+                    if(ImGui::IsItemDeactivatedAfterEdit()) UpdatePreview(g_InputText);
+                    ImGui::TextDisabled("(Newlines are ignored. You can press Enter to wrap text manually)");
+                } else {
+                    // Scrollable list of blocks
+                    if (ImGui::Button("Select All")) {
+                        for(auto& b : g_UnicodeBlocks) b.enabled = true;
                         UpdatePreview(g_InputText);
                     }
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("U+%04X - U+%04X", block.start, block.end);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Deselect All")) {
+                        for(auto& b : g_UnicodeBlocks) b.enabled = false;
+                        UpdatePreview(g_InputText);
                     }
+                    
+                    ImGui::BeginChild("BlocksList", ImVec2(0, 200), true);
+                    for (auto& block : g_UnicodeBlocks) {
+                        if (ImGui::Checkbox(block.name.c_str(), &block.enabled)) {
+                            UpdatePreview(g_InputText);
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("U+%04X - U+%04X", block.start, block.end);
+                        }
+                    }
+                    ImGui::EndChild();
                 }
-                ImGui::EndChild();
             }
 
             // Size with +/- buttons
@@ -1023,7 +1333,18 @@ int main(int, char**) {
             
             ImGui::Separator();
             ImGui::Separator();
+            ImGui::Text("Char Adjustments");
+            if (ImGui::DragInt("xAdvance##Global", &g_GlobalXAdvance, 1, -100, 100)) UpdatePreview(g_InputText);
+            if (ImGui::DragInt("xOffset##Global", &g_GlobalXOffset, 1, -100, 100)) UpdatePreview(g_InputText);
+            if (ImGui::DragInt("yOffset##Global", &g_GlobalYOffset, 1, -100, 100)) UpdatePreview(g_InputText);
+
+            ImGui::Separator();
             ImGui::Text("Export Settings");
+            
+            ImGui::Text("Format:");
+            const char* formats[] = { ".fnt (BMFont XML)", ".fnt (BMFont Text)", ".xml (BMFont XML)", ".txt (BMFont Text)", ".fnt (BMFont Binary)" };
+            ImGui::Combo("##Format", &g_ExportFormat, formats, IM_ARRAYSIZE(formats));
+            
             ImGui::InputText("Filename", g_ExportFilename, IM_ARRAYSIZE(g_ExportFilename));
             
             // Background Control
@@ -1051,7 +1372,29 @@ int main(int, char**) {
                          hqSettings.hintingMode = g_HintingMode;
 
                          // Re-generate charset logic
-                         std::vector<uint32_t> charset = GenerateCharsetFromBlocks(g_UnicodeBlocks);
+                         std::vector<uint32_t> charset;
+                         if (g_UseCustomGlyphs) {
+                            auto decodeUtf8 = [](const char* p) -> std::vector<uint32_t> {
+                                std::vector<uint32_t> res;
+                                while (*p) {
+                                    uint32_t c = 0;
+                                    if ((*p & 0x80) == 0) { c = *p++; }
+                                    else if ((*p & 0xE0) == 0xC0) { c = (*p++ & 0x1F) << 6; c |= (*p++ & 0x3F); }
+                                    else if ((*p & 0xF0) == 0xE0) { c = (*p++ & 0x0F) << 12; c |= (*p++ & 0x3F) << 6; c |= (*p++ & 0x3F); }
+                                    else if ((*p & 0xF8) == 0xF0) { c = (*p++ & 0x07) << 18; c |= (*p++ & 0x3F) << 12; c |= (*p++ & 0x3F) << 6; c |= (*p++ & 0x3F); }
+                                    else { p++; continue; }
+                                    if (c < 32) continue; // Ignore control characters (newlines, tabs, etc)
+                                    res.push_back(c);
+                                }
+                                return res;
+                            };
+                            charset = decodeUtf8(g_CustomGlyphsText);
+                            std::sort(charset.begin(), charset.end());
+                            charset.erase(std::unique(charset.begin(), charset.end()), charset.end());
+                         } else {
+                            charset = GenerateCharsetFromBlocks(g_UnicodeBlocks);
+                         }
+
                          if(charset.empty()) { for(uint32_t c=0x20; c<=0x7E; c++) charset.push_back(c); }
                          
                          if (!g_ExcludedGlyphs.empty()) {
@@ -1064,7 +1407,18 @@ int main(int, char**) {
 
                          if (!hqAtlas.hasErrors && hqAtlas.width > 0) {
                             std::string fname = (std::string(g_ExportFilename).empty()) ? "font_export" : std::string(g_ExportFilename);
-                            if (Exporter::ExportAtlasToDisk(hqAtlas, folder, fname)) {
+                            
+                             int formatEnum = 0; // Default XML
+                             std::string ext = ".fnt";
+                             switch(g_ExportFormat) {
+                                 case 0: formatEnum = 0; ext = ".fnt"; break; // XML
+                                 case 1: formatEnum = 1; ext = ".fnt"; break; // Text
+                                 case 2: formatEnum = 0; ext = ".xml"; break; // XML
+                                 case 3: formatEnum = 1; ext = ".txt"; break; // Text
+                                 case 4: formatEnum = 2; ext = ".fnt"; break; // Binary
+                             }
+
+                            if (Exporter::ExportAtlasToDisk(hqAtlas, folder, fname, formatEnum, ext)) {
                                  g_StatusMessage = "Export Success (HQ)!";
                                  g_StatusTime = ImGui::GetTime();
                                  g_StatusIsError = false;
@@ -1314,7 +1668,39 @@ int main(int, char**) {
                                 ImGui::Text("Selected: U+%04X", g.charCode);
                                 ImGui::Separator();
                                 if (ImGui::MenuItem("Remove from Atlas")) {
-                                    g_ExcludedGlyphs.insert(g.charCode);
+                                    if (g_UseCustomGlyphs) {
+                                        // Remove from custom text string directly
+                                        std::string s(g_CustomGlyphsText);
+                                        // Simple remove all instances of this char code (utf-8 aware would be better but for now naive remove)
+                                        // We need to re-encode the char to UTF-8 to find it? Or just iterate.
+                                        
+                                        // Better approach: Reconstruct string without this char.
+                                        std::string newS;
+                                        // Use the decode helper again to iterate properly? Or just manual.
+                                        // Let's iterate byte by byte and decode, skipping the target char.
+                                        const char* p = g_CustomGlyphsText;
+                                        while (*p) {
+                                            const char* start = p;
+                                            uint32_t c = 0;
+                                            if ((*p & 0x80) == 0) { c = *p++; }
+                                            else if ((*p & 0xE0) == 0xC0) { c = (*p++ & 0x1F) << 6; c |= (*p++ & 0x3F); }
+                                            else if ((*p & 0xF0) == 0xE0) { c = (*p++ & 0x0F) << 12; c |= (*p++ & 0x3F) << 6; c |= (*p++ & 0x3F); }
+                                            else if ((*p & 0xF8) == 0xF0) { c = (*p++ & 0x07) << 18; c |= (*p++ & 0x3F) << 12; c |= (*p++ & 0x3F) << 6; c |= (*p++ & 0x3F); }
+                                            else { p++; continue; } 
+                                            
+                                            if (c != g.charCode) {
+                                                // Append original bytes
+                                                newS.append(start, p - start);
+                                            }
+                                        }
+                                        
+                                        strncpy(g_CustomGlyphsText, newS.c_str(), sizeof(g_CustomGlyphsText) - 1);
+                                        g_CustomGlyphsText[sizeof(g_CustomGlyphsText) - 1] = '\0'; // Ensure null term
+
+                                    } else {
+                                        g_ExcludedGlyphs.insert(g.charCode);
+                                    }
+                                    
                                     UpdatePreview(g_InputText);
                                     g_SelectedGlyphIndex = -1;
                                 }
@@ -1391,8 +1777,10 @@ int main(int, char**) {
 
 
     int curW, curH;
+    int curX, curY;
     glfwGetWindowSize(window, &curW, &curH);
-    SaveWindowConfig(curW, curH);
+    glfwGetWindowPos(window, &curX, &curY);
+    SaveWindowConfig(curX, curY, curW, curH, g_PreviewSSAA);
 
     // Cleanup
     ImGui_ImplOpenGL3_Shutdown();

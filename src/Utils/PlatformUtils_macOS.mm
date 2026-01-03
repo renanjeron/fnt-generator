@@ -70,7 +70,7 @@ namespace Utils {
 
     std::string GetConfigDir() {
         NSString* path = [NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES) firstObject];
-        NSString* fullPath = [path stringByAppendingPathComponent:@"FontExporter"];
+        NSString* fullPath = [path stringByAppendingPathComponent:@"FntGenerator"];
         
         NSFileManager* fileManager = [NSFileManager defaultManager];
         if (![fileManager fileExistsAtPath:fullPath]) {

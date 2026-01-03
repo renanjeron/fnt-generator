@@ -84,6 +84,11 @@ struct AtlasSettings {
 
     // High Quality Export
     bool useSuperSampling = false; // Renders at 2x and downsamples
+    
+    // Char Adjustments
+    int globalXAdvance = 0;
+    int globalXOffset = 0;
+    int globalYOffset = 0;
 };
 
 class TextureGenerator {

@@ -323,9 +323,9 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
         gp.y = destY;
         gp.width = rc.packingWidth;
         gp.height = rc.packingHeight;
-        gp.xoffset = -rc.penOffsetX; 
-        gp.yoffset = fontManager.GetAscender() - rc.penOffsetY;
-        gp.advance = rc.body.advance;
+        gp.xoffset = -rc.penOffsetX + settings.globalXOffset; 
+        gp.yoffset = (fontManager.GetAscender() - rc.penOffsetY) + settings.globalYOffset;
+        gp.advance = rc.body.advance + settings.globalXAdvance;
         result.glyphs.push_back(gp);
         
         currentX += rc.packingWidth + settings.padding;
@@ -432,29 +432,45 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
         }
         rc.advance = rc.body.advance;
         
-        int gLeft = currentPenX + rc.bearingX;
-        int gTop = -rc.bearingY;
-        int gRight = gLeft + rc.width;
-        int gBottom = gTop + rc.height;
-        
+        // 1. Reference Position (No Offset)
+        int refLeft = currentPenX + rc.bearingX;
+        int refTop = -rc.bearingY;
+        int refRight = refLeft + rc.width;
+        int refBottom = refTop + rc.height;
+
+        // 2. Shifted Position (With Offset)
+        int sLeft = refLeft + settings.globalXOffset;
+        int sTop = refTop + settings.globalYOffset;
+        int sRight = sLeft + rc.width; 
+        int sBottom = sTop + rc.height;
+
+        // Shadow Bounds (applied to Shifted)
         if (settings.enableShadow) {
-            int sLeft = gLeft + settings.shadowOffsetX;
-            int sTop = gTop + settings.shadowOffsetY;
-            int sRight = sLeft + rc.width; 
-            int sBottom = sTop + rc.height;
-            if (sLeft < minX) minX = sLeft;
-            if (sTop < minY) minY = sTop;
-            if (sRight > maxX) maxX = sRight;
-            if (sBottom > maxY) maxY = sBottom;
+            int shLeft = sLeft + settings.shadowOffsetX;
+            int shTop = sTop + settings.shadowOffsetY;
+            int shRight = shLeft + rc.width; 
+            int shBottom = shTop + rc.height;
+            // Add shadow to bounds
+            if (shLeft < minX) minX = shLeft;
+            if (shTop < minY) minY = shTop;
+            if (shRight > maxX) maxX = shRight;
+            if (shBottom > maxY) maxY = shBottom;
         }
 
-        if (gLeft < minX) minX = gLeft;
-        if (gTop < minY) minY = gTop;
-        if (gRight > maxX) maxX = gRight;
-        if (gBottom > maxY) maxY = gBottom;
+        // Union Bounds: Include BOTH Reference and Shifted
+        // This anchors the view so offsets create visible movement
+        int bMinX = std::min(refLeft, sLeft);
+        int bMinY = std::min(refTop, sTop);
+        int bMaxX = std::max(refRight, sRight);
+        int bMaxY = std::max(refBottom, sBottom);
+
+        if (bMinX < minX) minX = bMinX;
+        if (bMinY < minY) minY = bMinY;
+        if (bMaxX > maxX) maxX = bMaxX;
+        if (bMaxY > maxY) maxY = bMaxY;
         
         chars.push_back(rc);
-        currentPenX += rc.advance;
+        currentPenX += rc.advance + settings.globalXAdvance;
     }
     if (currentPenX > maxX) maxX = currentPenX;
     if (chars.empty()) { minX=0; minY=0; maxX=10; maxY=10; }
@@ -480,15 +496,15 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
     currentPenX = startPenXInTex;
 
     for (const auto& rc : chars) {
-        int drawX = currentPenX + rc.bearingX;
-        int drawY = baselineInTex - rc.bearingY;
+        int drawX = currentPenX + rc.bearingX + settings.globalXOffset;
+        int drawY = baselineInTex - rc.bearingY + settings.globalYOffset;
 
         // Coordinates
-        int outlineX = drawX; // drawX is already currentPenX + rc.bearingX (which is outline's bearing)
+        int outlineX = drawX; 
         int outlineY = drawY;
         
-        int bodyX = currentPenX + rc.body.bearingX;
-        int bodyY = baselineInTex - rc.body.bearingY;
+        int bodyX = currentPenX + rc.body.bearingX + settings.globalXOffset;
+        int bodyY = baselineInTex - rc.body.bearingY + settings.globalYOffset;
 
         // Shadow 
         if (settings.enableShadow) {
@@ -530,7 +546,7 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
         
         BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX, bodyY, rc.body, topCol, settings.enableGradient, settings.colorBottom);
 
-        currentPenX += rc.advance;
+        currentPenX += rc.advance + settings.globalXAdvance;
     }
     return result;
 }

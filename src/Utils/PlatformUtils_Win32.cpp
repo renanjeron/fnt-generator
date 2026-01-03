@@ -158,7 +158,7 @@ namespace Utils {
     std::string GetConfigDir() {
         char path[MAX_PATH];
         if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, path))) {
-            std::string p = std::string(path) + "\\FontExporter";
+            std::string p = std::string(path) + "\\FntGenerator";
             CreateDirectoryA(p.c_str(), NULL);
             return p;
         }

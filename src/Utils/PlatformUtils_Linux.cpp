@@ -81,13 +81,13 @@ namespace Utils {
         const char* configHome = getenv("XDG_CONFIG_HOME");
         std::string path;
         if (configHome && configHome[0] != '\0') {
-            path = std::string(configHome) + "/FontExporter";
+            path = std::string(configHome) + "/FntGenerator";
         } else {
             const char* home = getenv("HOME");
             if (home) {
-                path = std::string(home) + "/.config/FontExporter";
+                path = std::string(home) + "/.config/FntGenerator";
             } else {
-                path = "./.config/FontExporter";
+                path = "./.config/FntGenerator";
             }
         }
         std::filesystem::create_directories(path);

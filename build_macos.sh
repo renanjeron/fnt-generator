@@ -13,10 +13,10 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 # Build
 cmake --build . --config Release
 
-echo "Build complete! Output in build_macos/FontExporter.app"
+echo "Build complete! Output in build_macos/FntGenerator.app"
 
 # Ask to run
-read -p "Do you want to run Font Exporter now? (y/n): " choice
+read -p "Do you want to run FntGenerator now? (y/n): " choice
 if [[ "$choice" == "y" || "$choice" == "Y" ]]; then
-    open FontExporter.app
+    open FntGenerator.app
 fi
