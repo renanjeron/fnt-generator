@@ -8,6 +8,8 @@ A cross-platform (Windows, macOS, Linux) tool for generating bitmap font atlases
 
 - **Cross-Platform:** Runs on Windows, macOS, and Linux.
 - **High Quality:** Uses FreeType with configurable hinting (Smooth, Sharp, Crisp) and Super Sampling Anti-Aliasing (SSAA 2x).
+- **Custom Glyphs:** Select predefined unicode ranges or custom glyph sets and manage presets for easy reuse.
+- **Adjust Characters:** Adjust character metrics (xAdvance, xOffset, yOffset) for fine-tuning.
 - **Advanced Effects:** 
   - Stroke/Outline (Gradient support)
   - Drop Shadow (Blur support)
@@ -15,7 +17,7 @@ A cross-platform (Windows, macOS, Linux) tool for generating bitmap font atlases
   - Bevel/Emboss
   - Gradient Fills
 - **Real-Time Preview:** Visualize your atlas and text rendering instantly.
-- **Export:** Generates industry-standard `.fnt` (XML) and `.png` atlases compatible with popular game engines (AngelCode BMFont format).
+- **Export:** Generates industry-standard `.fnt` (XML, Binary, Text) and `.png` atlases compatible with popular game engines (AngelCode BMFont format).
 - **Style Persistence:** Save and load your favorite font styles.
 
 ## Prerequisites
@@ -45,7 +47,7 @@ A cross-platform (Windows, macOS, Linux) tool for generating bitmap font atlases
 1. Open the project folder in **Visual Studio** or use the provided script.
 2. Run `build_windows.bat` in the root directory.
    - This script will configure CMake, build the project in Release mode, and place the executable in `build/Release`.
-3. The executable will be available at `build\Release\FontExporter.exe`.
+3. The executable will be available at `build\Release\FntGenerator.exe`.
 
 ### macOS
 1. Ensure dependencies are installed:
@@ -57,7 +59,7 @@ A cross-platform (Windows, macOS, Linux) tool for generating bitmap font atlases
    chmod +x build_macos.sh
    ./build_macos.sh
    ```
-3. This creates a `.app` bundle at `build/FontExporter.app`. You can run it directly or move it to Applications.
+3. This creates a `.app` bundle at `build/FntGenerator.app`. You can run it directly or move it to Applications.
 
 ### Linux
 1. Install dependencies:
@@ -72,7 +74,7 @@ A cross-platform (Windows, macOS, Linux) tool for generating bitmap font atlases
    ```
 3. Run the executable:
    ```sh
-   ./build/FontExporter
+   ./build/FntGenerator
    ```
 
 ## Usage Guide
