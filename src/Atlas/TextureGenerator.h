@@ -87,7 +87,8 @@ struct AtlasSettings {
     PatternData pattern;
 
     // High Quality Export
-    bool useSuperSampling = false; // Renders at 2x and downsamples
+    bool useSuperSampling = false;    // Renders at 2x and downsamples (Legacy)
+    int superSamplingFactor = 1;      // 1=None, 2=SSAA 2x, 4=SSAA 4x
     
     // Char Adjustments
     int globalXAdvance = 0;

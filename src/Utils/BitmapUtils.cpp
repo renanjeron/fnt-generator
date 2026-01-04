@@ -19,16 +19,37 @@ namespace BitmapUtils {
     static std::map<std::string, CachedImage> g_PatternCache;
     static std::mutex g_CacheMutex;
 
-    // Blend Helper: Normal blend of two RGBA colors (straight alpha)
+    // Gamma Correction Utilities
+    inline float sRGBToLinear(float v) {
+        return (v <= 0.04045f) ? (v / 12.92f) : powf((v + 0.055f) / 1.055f, 2.4f);
+    }
+    inline float LinearToSRGB(float v) {
+        return (v <= 0.0031308f) ? (v * 12.92f) : (1.055f * powf(v, 1.0f / 2.4f) - 0.055f);
+    }
+
+    // Blend Helper: Normal blend of two RGBA colors (straight alpha) using Linear Light
     inline void BlendPixels(uint8_t* dst, uint8_t r, uint8_t g, uint8_t b, float sa) {
         if (sa <= 0.001f) return;
         if (sa >= 0.999f) {
             dst[0] = r; dst[1] = g; dst[2] = b;
             return;
         }
-        dst[0] = (uint8_t)(r * sa + dst[0] * (1.0f - sa));
-        dst[1] = (uint8_t)(g * sa + dst[1] * (1.0f - sa));
-        dst[2] = (uint8_t)(b * sa + dst[2] * (1.0f - sa));
+
+        float dr = sRGBToLinear(dst[0] / 255.0f);
+        float dg = sRGBToLinear(dst[1] / 255.0f);
+        float db = sRGBToLinear(dst[2] / 255.0f);
+
+        float sr = sRGBToLinear(r / 255.0f);
+        float sg = sRGBToLinear(g / 255.0f);
+        float sb = sRGBToLinear(b / 255.0f);
+
+        float resR = sr * sa + dr * (1.0f - sa);
+        float resG = sg * sa + dg * (1.0f - sa);
+        float resB = sb * sa + db * (1.0f - sa);
+
+        dst[0] = (uint8_t)(LinearToSRGB(resR) * 255.0f);
+        dst[1] = (uint8_t)(LinearToSRGB(resG) * 255.0f);
+        dst[2] = (uint8_t)(LinearToSRGB(resB) * 255.0f);
     }
 
     // Blend Modes Math (0-1 floats)
@@ -352,7 +373,10 @@ void BlitGlyph(std::vector<uint8_t>& dest, int destW, int destH,
             
             float sa = (srcAlpha / 255.0f) * (globalAlpha / 255.0f);
             
-            // Check if destination is fully transparent (or very close)
+            float sr = sRGBToLinear(finalR / 255.0f);
+            float sg = sRGBToLinear(finalG / 255.0f);
+            float sb = sRGBToLinear(finalB / 255.0f);
+
             if (dest[idx + 3] == 0) {
                 // Straight Alpha replacement (Cleaner edges)
                 dest[idx + 0] = finalR;
@@ -361,17 +385,22 @@ void BlitGlyph(std::vector<uint8_t>& dest, int destW, int destH,
                 dest[idx + 3] = (uint8_t)(sa * 255.0f);
             } else {
                 float da = dest[idx + 3] / 255.0f;
+                float dr = sRGBToLinear(dest[idx + 0] / 255.0f);
+                float dg = sRGBToLinear(dest[idx + 1] / 255.0f);
+                float db = sRGBToLinear(dest[idx + 2] / 255.0f);
+
                 // Result Alpha
                 float outA = sa + da * (1.0f - sa);
                 if (outA <= 0.0f) continue;
-                // Result RGB (Straight)
-                float r = (finalR * sa + dest[idx + 0] * da * (1.0f - sa)) / outA;
-                float g = (finalG * sa + dest[idx + 1] * da * (1.0f - sa)) / outA;
-                float b = (finalB * sa + dest[idx + 2] * da * (1.0f - sa)) / outA;
 
-                dest[idx + 0] = (uint8_t)std::min(255.0f, r);
-                dest[idx + 1] = (uint8_t)std::min(255.0f, g);
-                dest[idx + 2] = (uint8_t)std::min(255.0f, b);
+                // Result RGB (Balanced Linear)
+                float r = (sr * sa + dr * da * (1.0f - sa)) / outA;
+                float g = (sg * sa + dg * da * (1.0f - sa)) / outA;
+                float b = (sb * sa + db * da * (1.0f - sa)) / outA;
+
+                dest[idx + 0] = (uint8_t)(LinearToSRGB(r) * 255.0f);
+                dest[idx + 1] = (uint8_t)(LinearToSRGB(g) * 255.0f);
+                dest[idx + 2] = (uint8_t)(LinearToSRGB(b) * 255.0f);
                 dest[idx + 3] = (uint8_t)(outA * 255.0f);
             }
         }

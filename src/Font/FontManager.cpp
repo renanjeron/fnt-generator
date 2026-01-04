@@ -57,6 +57,7 @@ bool FontManager::LoadFont(const std::string& path) {
 }
 
 void FontManager::SetSize(int size) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_currentSize = size;
     if (m_face) {
         FT_Set_Pixel_Sizes(m_face, 0, size);
@@ -71,6 +72,7 @@ std::string FontManager::GetFontName() const {
 }
 
 GlyphBitmap FontManager::RenderGlyph(uint32_t charCode, FT_Int32 loadFlags) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     GlyphBitmap result = { {}, 0, 0, 0, 0, 0 };
 
     if (!m_face) return result;
@@ -100,6 +102,7 @@ GlyphBitmap FontManager::RenderGlyph(uint32_t charCode, FT_Int32 loadFlags) {
 }
 
 GlyphBitmap FontManager::RenderGlyphStroke(uint32_t charCode, float strokeWidth, FT_Int32 loadFlags) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     GlyphBitmap result = { {}, 0, 0, 0, 0, 0 };
 
     if (!m_face || !m_stroker) return result;
@@ -161,12 +164,29 @@ GlyphBitmap FontManager::RenderGlyphStroke(uint32_t charCode, float strokeWidth,
 }
 
 bool FontManager::HasGlyph(uint32_t charCode) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     if (!m_face) return false;
     return FT_Get_Char_Index(m_face, charCode) != 0;
 }
 
+int FontManager::GetAscender() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_face ? (m_face->size->metrics.ascender >> 6) : 0;
+}
+
+int FontManager::GetDescender() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_face ? (m_face->size->metrics.descender >> 6) : 0;
+}
+
+int FontManager::GetLineHeight() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_face ? (m_face->size->metrics.height >> 6) : 0;
+}
+
 int FontManager::GetKerning(uint32_t left, uint32_t right) {
-    if (!m_face) return 0;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!m_face || !FT_HAS_KERNING(m_face)) return 0;
     FT_Vector kerning;
     FT_Get_Kerning(m_face, FT_Get_Char_Index(m_face, left), FT_Get_Char_Index(m_face, right), FT_KERNING_DEFAULT, &kerning);
     return kerning.x >> 6;

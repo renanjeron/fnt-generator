@@ -54,3 +54,7 @@
 !images/*.png
 # Keep user saved json styles if desired, or exclude:
 # *.json
+
+# Logs
+*.log
+*build_log*.txt

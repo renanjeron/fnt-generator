@@ -5,6 +5,7 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_STROKER_H
+#include <mutex>
 
 struct GlyphBitmap {
     std::vector<unsigned char> buffer;
@@ -49,13 +50,14 @@ public:
     bool IsLoaded() const { return m_face != nullptr; }
     
     // Get font metrics
-    int GetAscender() const { return m_face ? (m_face->size->metrics.ascender >> 6) : 0; }
-    int GetDescender() const { return m_face ? (m_face->size->metrics.descender >> 6) : 0; }
-    int GetLineHeight() const { return m_face ? (m_face->size->metrics.height >> 6) : 0; }
+    int GetAscender() const;
+    int GetDescender() const;
+    int GetLineHeight() const;
 
 private:
     FT_Library m_library = nullptr;
     FT_Face m_face = nullptr;
     FT_Stroker m_stroker = nullptr;
     int m_currentSize = 24;
+    mutable std::mutex m_mutex;
 };

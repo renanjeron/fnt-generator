@@ -5,6 +5,8 @@
 #include <cmath>
 #include <vector>
 #include <cstdint>
+#include <future>
+#include <thread>
 
 // Wrapper
 AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std::string& text, const AtlasSettings& settings) {
@@ -19,71 +21,79 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
 AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std::vector<uint32_t>& charset, const AtlasSettings& settings) {
     
     // 1. Super Sampling
-    if (settings.useSuperSampling) {
+    int factor = settings.superSamplingFactor;
+    if (factor <= 0) factor = 1;
+
+    if (factor > 1) {
         AtlasSettings highSettings = settings;
+        highSettings.superSamplingFactor = 1; // Don't recurse
         highSettings.useSuperSampling = false;
-        highSettings.fontSize *= 2;
-        highSettings.padding *= 2;
-        highSettings.atlasWidth *= 2;
-        highSettings.atlasHeight *= 2;
-        highSettings.strokeWidth *= 2.0f;
-        highSettings.shadowOffsetX *= 2;
-        highSettings.shadowOffsetY *= 2;
-        highSettings.shadowBlur *= 2;
-        highSettings.bevelDistance *= 2.0f;
-        highSettings.bevelSpread *= 2.0f;
-        highSettings.innerGlowSize *= 2.0f;
         
+        highSettings.fontSize *= factor;
+        highSettings.padding *= factor;
+        highSettings.atlasWidth *= factor;
+        highSettings.atlasHeight *= factor;
+        highSettings.strokeWidth *= (float)factor;
+        highSettings.shadowOffsetX *= factor;
+        highSettings.shadowOffsetY *= factor;
+        highSettings.shadowBlur *= factor;
+        highSettings.bevelDistance *= (float)factor;
+        highSettings.bevelSpread *= (float)factor;
+        highSettings.innerGlowSize *= (float)factor;
+        highSettings.pattern.scale *= (float)factor; // Ensure patterns scale too
+
         AtlasResult highRes = GenerateAtlas(fontManager, charset, highSettings);
         
         if (highRes.hasErrors && highRes.skippedGlyphs == 0) return highRes;
         
         AtlasResult result;
-        result.width = highRes.width / 2;
-        result.height = highRes.height / 2;
-        result.atlasWidth = highRes.atlasWidth / 2;
-        result.atlasHeight = highRes.atlasHeight / 2;
+        result.width = highRes.width / factor;
+        result.height = highRes.height / factor;
+        result.atlasWidth = highRes.atlasWidth / factor;
+        result.atlasHeight = highRes.atlasHeight / factor;
         result.hasErrors = highRes.hasErrors;
         result.errorMessage = highRes.errorMessage;
         result.skippedGlyphs = highRes.skippedGlyphs;
         
         // Downsample Metrics
-        result.fontSize = highRes.fontSize / 2;
-        result.lineHeight = highRes.lineHeight / 2;
-        result.base = highRes.base / 2;
+        result.fontSize = highRes.fontSize / factor;
+        result.lineHeight = highRes.lineHeight / factor;
+        result.base = highRes.base / factor;
 
         // Downsample Pixels (Box Filter with Alpha Weighting to prevent dark edges)
         result.pixels.resize(result.width * result.height * 4);
         for(int y=0; y<result.height; y++) {
             for(int x=0; x<result.width; x++) {
                 int baseDest = (y*result.width + x)*4;
-                int baseSrc = ((y*2) * highRes.width + (x*2)) * 4;
                 
-                // Get 4 samples
-                uint8_t* p1 = &highRes.pixels[baseSrc];
-                uint8_t* p2 = &highRes.pixels[baseSrc + 4];
-                uint8_t* p3 = &highRes.pixels[baseSrc + highRes.width*4];
-                uint8_t* p4 = &highRes.pixels[baseSrc + highRes.width*4 + 4];
+                int sumR = 0, sumG = 0, sumB = 0, sumA = 0;
+                int totalAlpha = 0;
+
+                for (int sy = 0; sy < factor; sy++) {
+                    for (int sx = 0; sx < factor; sx++) {
+                        int srcX = x * factor + sx;
+                        int srcY = y * factor + sy;
+                        int baseSrc = (srcY * highRes.width + srcX) * 4;
+                        
+                        uint8_t a = highRes.pixels[baseSrc + 3];
+                        sumR += highRes.pixels[baseSrc + 0] * a;
+                        sumG += highRes.pixels[baseSrc + 1] * a;
+                        sumB += highRes.pixels[baseSrc + 2] * a;
+                        totalAlpha += a;
+                        sumA += a;
+                    }
+                }
                 
-                // Sum Alphas
-                int sumA = p1[3] + p2[3] + p3[3] + p4[3];
-                
-                if (sumA == 0) {
-                    // Fully transparent
+                if (totalAlpha == 0) {
                     result.pixels[baseDest + 0] = 0;
                     result.pixels[baseDest + 1] = 0;
                     result.pixels[baseDest + 2] = 0;
                     result.pixels[baseDest + 3] = 0;
                 } else {
-                    // Weighted Average for Colors
-                    int sumR = p1[0]*p1[3] + p2[0]*p2[3] + p3[0]*p3[3] + p4[0]*p4[3];
-                    int sumG = p1[1]*p1[3] + p2[1]*p2[3] + p3[1]*p3[3] + p4[1]*p4[3];
-                    int sumB = p1[2]*p1[3] + p2[2]*p2[3] + p3[2]*p3[3] + p4[2]*p4[3];
-                    
-                    result.pixels[baseDest + 0] = (uint8_t)(sumR / sumA);
-                    result.pixels[baseDest + 1] = (uint8_t)(sumG / sumA);
-                    result.pixels[baseDest + 2] = (uint8_t)(sumB / sumA);
-                    result.pixels[baseDest + 3] = (uint8_t)(sumA / 4); // Average Alpha
+                    result.pixels[baseDest + 0] = (uint8_t)(sumR / totalAlpha);
+                    result.pixels[baseDest + 1] = (uint8_t)(sumG / totalAlpha);
+                    result.pixels[baseDest + 2] = (uint8_t)(sumB / totalAlpha);
+                    result.pixels[baseDest + 3] = (uint8_t)(sumA / (factor * factor));
                 }
             }
         }
@@ -91,8 +101,8 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
         // Downsample Glyphs
         for(const auto& g : highRes.glyphs) {
             GlyphPlacement ng = g;
-            ng.x /= 2; ng.y /= 2; ng.width /= 2; ng.height /= 2;
-            ng.xoffset /= 2; ng.yoffset /= 2; ng.advance /= 2;
+            ng.x /= factor; ng.y /= factor; ng.width /= factor; ng.height /= factor;
+            ng.xoffset /= factor; ng.yoffset /= factor; ng.advance /= factor;
             result.glyphs.push_back(ng);
         }
         return result;
@@ -111,6 +121,8 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
         GlyphBitmap outline;
         int packingWidth, packingHeight;
         int penOffsetX, penOffsetY;
+        int atlasX = 0, atlasY = 0;
+        bool skip = false;
     };
     
     std::vector<RenderedChar> chars;
@@ -322,113 +334,32 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
         return result;
     }
 
+    // 5. Build Final Result List and Calculate Positions
     int currentX = settings.padding;
     int currentY = settings.padding;
     int currentRowHeight = 0;
     int skippedCount = 0;
 
-    for (const auto& rc : chars) {
+    for (auto& rc : chars) {
         if (currentX + rc.packingWidth + settings.padding > atlasWidth) {
             currentX = settings.padding;
             currentY += currentRowHeight + settings.padding;
             currentRowHeight = 0;
         }
         
-        // If it still doesn't fit in our safety buffer, skip
         if (currentY + rc.packingHeight + settings.padding > result.height) {
+            rc.skip = true;
             skippedCount++;
             continue; 
         }
 
-        int destX = currentX;
-        int destY = currentY;
-        int penX = destX + rc.penOffsetX; 
-        int penY = destY + rc.penOffsetY;
-        
-        // A. Shadow
-        if (settings.enableShadow) {
-             int blur = settings.shadowBlur;
-             int drawRefX = penX + rc.outline.bearingX + settings.shadowOffsetX;
-             int drawRefY = penY - rc.outline.bearingY + settings.shadowOffsetY;
-
-             if (blur > 0) {
-                 int sw = rc.outline.width + blur*2;
-                 int sh = rc.outline.height + blur*2;
-                 if (sw > 0 && sh > 0) {
-                    std::vector<uint8_t> shadowBuf(sw * sh, 0);
-                    for(int y=0; y<rc.outline.height; y++) {
-                        int srcOffset = y * rc.outline.width;
-                        int dstOffset = (y+blur)*sw + blur;
-                        if(srcOffset < (int)rc.outline.buffer.size() && dstOffset + rc.outline.width <= (int)shadowBuf.size())
-                            memcpy(shadowBuf.data() + dstOffset, rc.outline.buffer.data() + srcOffset, rc.outline.width);
-                    }
-                    std::vector<uint8_t> blurred = BitmapUtils::ApplyGaussianBlur(shadowBuf, sw, sh, (float)blur);
-                    GlyphBitmap shRes; shRes.buffer = blurred; shRes.width = sw; shRes.height = sh;
-                    
-                    BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
-                                           drawRefX - blur, drawRefY - blur, shRes, 
-                                           settings.shadowColor, nullptr);
-                 }
-             } else {
-                 BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
-                                        drawRefX, drawRefY, rc.outline, 
-                                        settings.shadowColor, nullptr);
-             }
-        }
-
-        // C. Stroke
-        // Composition (Body & Stroke)
-        auto DrawStroke = [&]() {
-            if (settings.enableStroke && settings.strokeWidth > 0) {
-                 bool mask = (settings.strokePosition == 2); // Inside
-                 BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
-                                       penX + rc.outline.bearingX, penY - rc.outline.bearingY, rc.outline, 
-                                       settings.strokeColor, &settings.strokeGradient, mask);
-            }
-        };
-
-        auto DrawBody = [&]() {
-            int bodyX = penX + rc.body.bearingX;
-            int bodyY = penY - rc.body.bearingY;
-            
-            if (settings.enableInnerGlow && settings.innerGlowSize > 0) {
-                 BitmapUtils::DrawInnerGlow(result.pixels, result.width, result.height, 
-                                            bodyX, bodyY, rc.body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor);
-            }
-            
-            BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
-                                   bodyX, bodyY, rc.body, 
-                                   settings.fillColor, &settings.fillGradient);
-
-            if (settings.pattern.enabled) {
-                BitmapUtils::ApplyPatternOverlay(result.pixels, result.width, result.height,
-                                                 bodyX, bodyY, rc.body,
-                                                 settings.pattern);
-            }
-        };
-
-        if (settings.strokePosition == 0) { // Outside
-            DrawStroke();
-            DrawBody();
-        } else { // Center or Inside
-            DrawBody();
-            DrawStroke();
-        }
-
-        // B. Bevel (Drawn on top to shade the body/stroke)
-        if (settings.enableBevel && settings.bevelDistance > 0) {
-            BitmapUtils::DrawBevel(result.pixels, result.width, result.height,
-                                   penX + rc.body.bearingX, penY - rc.body.bearingY,
-                                   rc.body,
-                                   settings.bevelDistance, (float)settings.bevelAngle, 
-                                   settings.bevelSpread, settings.bevelStrength, settings.bevelType,
-                                   settings.bevelHighlightColor, settings.bevelShadowColor);
-        }
+        rc.atlasX = currentX;
+        rc.atlasY = currentY;
         
         GlyphPlacement gp;
         gp.charCode = rc.code;
-        gp.x = destX;
-        gp.y = destY;
+        gp.x = rc.atlasX;
+        gp.y = rc.atlasY;
         gp.width = rc.packingWidth;
         gp.height = rc.packingHeight;
         gp.xoffset = -rc.penOffsetX + settings.globalXOffset; 
@@ -439,6 +370,110 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
         currentX += rc.packingWidth + settings.padding;
         if (rc.packingHeight > currentRowHeight) currentRowHeight = rc.packingHeight;
     }
+
+    // 6. Parallel Composition
+    int numGlyphs = (int)chars.size();
+    int numHardwareThreads = std::thread::hardware_concurrency();
+    int numThreads = std::max(1, std::min(numHardwareThreads, (numGlyphs / 5) + 1));
+
+    int chunkSize = (numGlyphs + numThreads - 1) / numThreads;
+    std::vector<std::future<void>> futures;
+
+    for (int t = 0; t < numThreads; t++) {
+        int startIdx = t * chunkSize;
+        int endIdx = std::min(startIdx + chunkSize, numGlyphs);
+        if (startIdx >= endIdx) break;
+
+        futures.push_back(std::async(std::launch::async, [&, startIdx, endIdx]() {
+            for (int i = startIdx; i < endIdx; i++) {
+                const auto& rc = chars[i];
+                if (rc.skip) continue;
+
+                int penX = rc.atlasX + rc.penOffsetX; 
+                int penY = rc.atlasY + rc.penOffsetY;
+                
+                // A. Shadow
+                if (settings.enableShadow) {
+                     int blur = settings.shadowBlur;
+                     int drawRefX = penX + rc.outline.bearingX + settings.shadowOffsetX;
+                     int drawRefY = penY - rc.outline.bearingY + settings.shadowOffsetY;
+
+                     if (blur > 0) {
+                         int sw = rc.outline.width + blur*2;
+                         int sh = rc.outline.height + blur*2;
+                         if (sw > 0 && sh > 0) {
+                            std::vector<uint8_t> shadowBuf(sw * sh, 0);
+                            for(int y=0; y<rc.outline.height; y++) {
+                                int srcOffset = y * rc.outline.width;
+                                int dstOffset = (y+blur)*sw + blur;
+                                if(srcOffset < (int)rc.outline.buffer.size() && dstOffset + rc.outline.width <= (int)shadowBuf.size())
+                                    memcpy(shadowBuf.data() + dstOffset, rc.outline.buffer.data() + srcOffset, rc.outline.width);
+                            }
+                            std::vector<uint8_t> blurred = BitmapUtils::ApplyGaussianBlur(shadowBuf, sw, sh, (float)blur);
+                            GlyphBitmap shRes; shRes.buffer = blurred; shRes.width = sw; shRes.height = sh;
+                            
+                            BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
+                                                   drawRefX - blur, drawRefY - blur, shRes, 
+                                                   settings.shadowColor, nullptr);
+                         }
+                     } else {
+                         BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
+                                                drawRefX, drawRefY, rc.outline, 
+                                                settings.shadowColor, nullptr);
+                     }
+                }
+
+                // composition lambda definitions
+                auto DrawStroke = [&]() {
+                    if (settings.enableStroke && settings.strokeWidth > 0) {
+                         bool mask = (settings.strokePosition == 2); // Inside
+                         BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
+                                               penX + rc.outline.bearingX, penY - rc.outline.bearingY, rc.outline, 
+                                               settings.strokeColor, &settings.strokeGradient, mask);
+                    }
+                };
+
+                auto DrawBody = [&]() {
+                    int bodyX = penX + rc.body.bearingX;
+                    int bodyY = penY - rc.body.bearingY;
+                    
+                    if (settings.enableInnerGlow && settings.innerGlowSize > 0) {
+                         BitmapUtils::DrawInnerGlow(result.pixels, result.width, result.height, 
+                                                    bodyX, bodyY, rc.body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor);
+                    }
+                    
+                    BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
+                                           bodyX, bodyY, rc.body, 
+                                           settings.fillColor, &settings.fillGradient);
+
+                    if (settings.pattern.enabled) {
+                        BitmapUtils::ApplyPatternOverlay(result.pixels, result.width, result.height,
+                                                         bodyX, bodyY, rc.body,
+                                                         settings.pattern);
+                    }
+                };
+
+                if (settings.strokePosition == 0) { // Outside
+                    DrawStroke();
+                    DrawBody();
+                } else { // Center or Inside
+                    DrawBody();
+                    DrawStroke();
+                }
+
+                // B. Bevel
+                if (settings.enableBevel && settings.bevelDistance > 0) {
+                    BitmapUtils::DrawBevel(result.pixels, result.width, result.height,
+                                           penX + rc.body.bearingX, penY - rc.body.bearingY,
+                                           rc.body,
+                                           settings.bevelDistance, (float)settings.bevelAngle, 
+                                           settings.bevelSpread, settings.bevelStrength, settings.bevelType,
+                                           settings.bevelHighlightColor, settings.bevelShadowColor);
+                }
+            }
+        }));
+    }
+    for (auto& f : futures) f.wait();
     
     // Apply Red Tint to out-of-bounds areas
     if (result.height > atlasHeight) {
@@ -457,33 +492,75 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
 
 // Legacy Preview
 AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, const std::string& text, const AtlasSettings& settings) {
-    if (settings.useSuperSampling) {
-         // ... SSAA recursion (omitted for brevity, assume similar to GenerateAtlas but calls GenerateTextPreview) ...
-         // Copying full implementation from memory
+    
+    // 1. Super Sampling
+    int factor = settings.superSamplingFactor;
+    if (factor <= 0) factor = 1;
+
+    if (factor > 1) {
         AtlasSettings highSettings = settings;
-        highSettings.useSuperSampling = false;
-        highSettings.fontSize *= 2;
-        highSettings.padding *= 2;
-        highSettings.strokeWidth *= 2.0f;
-        highSettings.shadowOffsetX *= 2;
-        highSettings.shadowOffsetY *= 2;
-        highSettings.shadowBlur *= 2; // Preview ignores real blur, uses duplicate draw
-        highSettings.bevelDistance *= 2.0f;
-        highSettings.bevelSpread *= 2.0f;
-        highSettings.innerGlowSize *= 2.0f;
+        highSettings.superSamplingFactor = 1; 
         
+        highSettings.fontSize *= factor;
+        highSettings.padding *= factor;
+        highSettings.strokeWidth *= (float)factor;
+        highSettings.shadowOffsetX *= factor;
+        highSettings.shadowOffsetY *= factor;
+        highSettings.shadowBlur *= factor;
+        highSettings.bevelDistance *= (float)factor;
+        highSettings.bevelSpread *= (float)factor;
+        highSettings.innerGlowSize *= (float)factor;
+        highSettings.pattern.scale *= (float)factor;
+
         AtlasResult highRes = GenerateTextPreview(fontManager, text, highSettings);
+        
+        if (highRes.hasErrors) return highRes;
+        
         AtlasResult result;
-        result.width = highRes.width / 2;
-        result.height = highRes.height / 2;
+        result.width = highRes.width / factor;
+        result.height = highRes.height / factor;
+        result.hasErrors = highRes.hasErrors;
+        result.errorMessage = highRes.errorMessage;
+        
+        // Downsample Metrics
+        result.fontSize = highRes.fontSize / factor;
+        result.lineHeight = highRes.lineHeight / factor;
+        result.base = highRes.base / factor;
+
+        // Downsample Pixels (Box Filter with Alpha Weighting to prevent dark edges)
         result.pixels.resize(result.width * result.height * 4);
         for(int y=0; y<result.height; y++) {
             for(int x=0; x<result.width; x++) {
-                int baseSrc = ((y*2) * highRes.width + (x*2)) * 4;
-                for(int c=0; c<4; c++) {
-                    int sum = highRes.pixels[baseSrc + c] + highRes.pixels[baseSrc + 4 + c] +
-                              highRes.pixels[baseSrc + highRes.width*4 + c] + highRes.pixels[baseSrc + highRes.width*4 + 4 + c];
-                    result.pixels[(y*result.width + x)*4 + c] = (uint8_t)(sum / 4);
+                int baseDest = (y*result.width + x)*4;
+                
+                int sumR = 0, sumG = 0, sumB = 0, sumA = 0;
+                int totalAlpha = 0;
+
+                for (int sy = 0; sy < factor; sy++) {
+                    for (int sx = 0; sx < factor; sx++) {
+                        int srcX = x * factor + sx;
+                        int srcY = y * factor + sy;
+                        int baseSrc = (srcY * highRes.width + srcX) * 4;
+                        
+                        uint8_t a = highRes.pixels[baseSrc + 3];
+                        sumR += highRes.pixels[baseSrc + 0] * a;
+                        sumG += highRes.pixels[baseSrc + 1] * a;
+                        sumB += highRes.pixels[baseSrc + 2] * a;
+                        totalAlpha += a;
+                        sumA += a;
+                    }
+                }
+                
+                if (totalAlpha == 0) {
+                    result.pixels[baseDest + 0] = 0;
+                    result.pixels[baseDest + 1] = 0;
+                    result.pixels[baseDest + 2] = 0;
+                    result.pixels[baseDest + 3] = 0;
+                } else {
+                    result.pixels[baseDest + 0] = (uint8_t)(sumR / totalAlpha);
+                    result.pixels[baseDest + 1] = (uint8_t)(sumG / totalAlpha);
+                    result.pixels[baseDest + 2] = (uint8_t)(sumB / totalAlpha);
+                    result.pixels[baseDest + 3] = (uint8_t)(sumA / (factor * factor));
                 }
             }
         }
@@ -502,6 +579,9 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
         int width, height; 
         int bearingY, bearingX;
         long advance;
+        int outlineX, outlineY;
+        int bodyX, bodyY;
+        int currentPenX;
     };
     std::vector<RenderedChar> chars;
     
@@ -603,63 +683,83 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
     int startPenXInTex = -minX + settings.padding;
     currentPenX = startPenXInTex;
 
-    for (const auto& rc : chars) {
+    for (auto& rc : chars) {
         int drawX = currentPenX + rc.bearingX + settings.globalXOffset;
         int drawY = baselineInTex - rc.bearingY + settings.globalYOffset;
 
-        // Coordinates
-        int outlineX = drawX; 
-        int outlineY = drawY;
-        
-        int bodyX = currentPenX + rc.body.bearingX + settings.globalXOffset;
-        int bodyY = baselineInTex - rc.body.bearingY + settings.globalYOffset;
-
-        // Shadow 
-        if (settings.enableShadow) {
-            int shX = outlineX + settings.shadowOffsetX;
-            int shY = outlineY + settings.shadowOffsetY;
-            int blurLayers = settings.shadowBlur > 0 ? settings.shadowBlur : 1;
-            
-            for (int blur = 0; blur < blurLayers; blur++) {
-                float blurAlpha = settings.shadowColor[3] / (float)(blurLayers);
-                uint8_t shCol[4] = {settings.shadowColor[0], settings.shadowColor[1], settings.shadowColor[2], (uint8_t)blurAlpha};
-                int off = (blur - blurLayers/2);
-                BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, shX + off, shY + off, rc.outline, shCol, nullptr);
-            }
-        }
-        
-        // Bevel (Body)
-
-        // Stroke (Real Outline)
-        if (settings.enableStroke && settings.strokeWidth > 0) {
-            BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, outlineX, outlineY, rc.outline, settings.strokeColor, &settings.strokeGradient);
-        }
-        
-        // Body (Fill)
-        
-        if (settings.enableInnerGlow && settings.innerGlowSize > 0) {
-            BitmapUtils::DrawInnerGlow(result.pixels, result.width, result.height, bodyX, bodyY, rc.body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor);
-        }
-        
-        BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX, bodyY, rc.body, settings.fillColor, &settings.fillGradient);
-
-        if (settings.pattern.enabled) {
-            BitmapUtils::ApplyPatternOverlay(result.pixels, result.width, result.height,
-                                             bodyX, bodyY, rc.body,
-                                             settings.pattern);
-        }
-
-        // Bevel (Drawn on top)
-        if (settings.enableBevel && settings.bevelDistance > 0) {
-            BitmapUtils::DrawBevel(result.pixels, result.width, result.height,
-                                   bodyX, bodyY, rc.body,
-                                   settings.bevelDistance, (float)settings.bevelAngle,
-                                   settings.bevelSpread, settings.bevelStrength, settings.bevelType,
-                                   settings.bevelHighlightColor, settings.bevelShadowColor);
-        }
+        rc.outlineX = drawX; 
+        rc.outlineY = drawY;
+        rc.bodyX = currentPenX + rc.body.bearingX + settings.globalXOffset;
+        rc.bodyY = baselineInTex - rc.body.bearingY + settings.globalYOffset;
+        rc.currentPenX = currentPenX;
 
         currentPenX += rc.advance + settings.globalXAdvance;
     }
+
+    // Parallel Composition for Preview
+    int pNumGlyphs = (int)chars.size();
+    int pNumThreads = std::min((int)std::thread::hardware_concurrency(), (pNumGlyphs / 5) + 1);
+    if (pNumThreads < 1) pNumThreads = 1;
+    
+    int pChunkSize = (pNumGlyphs + pNumThreads - 1) / pNumThreads;
+    std::vector<std::future<void>> pFutures;
+
+    for (int t = 0; t < pNumThreads; t++) {
+        int startIdx = t * pChunkSize;
+        int endIdx = std::min(startIdx + pChunkSize, pNumGlyphs);
+        if (startIdx >= endIdx) break;
+
+        pFutures.push_back(std::async(std::launch::async, [&, startIdx, endIdx]() {
+            for (int i = startIdx; i < endIdx; i++) {
+                const auto& rc = chars[i];
+                
+                // Shadow 
+                if (settings.enableShadow) {
+                    int shX = rc.outlineX + settings.shadowOffsetX;
+                    int shY = rc.outlineY + settings.shadowOffsetY;
+                    int blurLayers = settings.shadowBlur > 0 ? settings.shadowBlur : 1;
+                    
+                    for (int blur = 0; blur < blurLayers; blur++) {
+                        float blurAlpha = settings.shadowColor[3] / (float)(blurLayers);
+                        uint8_t shCol[4] = {settings.shadowColor[0], settings.shadowColor[1], settings.shadowColor[2], (uint8_t)blurAlpha};
+                        int off = (blur - blurLayers/2);
+                        BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, shX + off, shY + off, rc.outline, shCol, nullptr);
+                    }
+                }
+                
+                if (settings.strokePosition == 0) { // Outside
+                    if (settings.enableStroke && settings.strokeWidth > 0) {
+                        BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, rc.outlineX, rc.outlineY, rc.outline, settings.strokeColor, &settings.strokeGradient);
+                    }
+                    if (settings.enableInnerGlow && settings.innerGlowSize > 0) {
+                        BitmapUtils::DrawInnerGlow(result.pixels, result.width, result.height, rc.bodyX, rc.bodyY, rc.body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor);
+                    }
+                    BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, rc.bodyX, rc.bodyY, rc.body, settings.fillColor, &settings.fillGradient);
+                } else {
+                    if (settings.enableInnerGlow && settings.innerGlowSize > 0) {
+                        BitmapUtils::DrawInnerGlow(result.pixels, result.width, result.height, rc.bodyX, rc.bodyY, rc.body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor);
+                    }
+                    BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, rc.bodyX, rc.bodyY, rc.body, settings.fillColor, &settings.fillGradient);
+                    if (settings.enableStroke && settings.strokeWidth > 0) {
+                        BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, rc.outlineX, rc.outlineY, rc.outline, settings.strokeColor, &settings.strokeGradient, (settings.strokePosition == 2));
+                    }
+                }
+
+                if (settings.pattern.enabled) {
+                    BitmapUtils::ApplyPatternOverlay(result.pixels, result.width, result.height, rc.bodyX, rc.bodyY, rc.body, settings.pattern);
+                }
+
+                if (settings.enableBevel && settings.bevelDistance > 0) {
+                    BitmapUtils::DrawBevel(result.pixels, result.width, result.height,
+                                           rc.bodyX, rc.bodyY, rc.body,
+                                           settings.bevelDistance, (float)settings.bevelAngle,
+                                           settings.bevelSpread, settings.bevelStrength, settings.bevelType,
+                                           settings.bevelHighlightColor, settings.bevelShadowColor);
+                }
+            }
+        }));
+    }
+    for (auto& f : pFutures) f.wait();
     return result;
 }
 

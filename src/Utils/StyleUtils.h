@@ -25,6 +25,6 @@ namespace Utils {
     std::string LoadCustomGlyphsPreset(const std::string& name);
 
     // Window Config
-    void SaveWindowConfig(int x, int y, int w, int h, bool ssaa);
-    void LoadWindowConfig(int& x, int& y, int& w, int& h, bool& ssaa);
+    void SaveWindowConfig(int x, int y, int w, int h, int ssaaFactor);
+    void LoadWindowConfig(int& x, int& y, int& w, int& h, int& ssaaFactor);
 }

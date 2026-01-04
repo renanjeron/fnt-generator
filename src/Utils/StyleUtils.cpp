@@ -132,25 +132,23 @@ std::string LoadCustomGlyphsPreset(const std::string& name) {
 }
 
 // Window Config
-void SaveWindowConfig(int x, int y, int w, int h, bool ssaa) {
+void SaveWindowConfig(int x, int y, int w, int h, int ssaaFactor) {
     std::string path = GetConfigDir() + "/window.cfg";
     std::string tmpPath = path + ".tmp";
     std::ofstream out(tmpPath);
     if (out.is_open()) {
-        out << w << " " << h << " " << (ssaa ? 1 : 0) << " " << x << " " << y;
+        out << w << " " << h << " " << ssaaFactor << " " << x << " " << y;
         out.close();
         std::remove(path.c_str());
         std::rename(tmpPath.c_str(), path.c_str());
     }
 }
 
-void LoadWindowConfig(int& x, int& y, int& w, int& h, bool& ssaa) {
-    x = 100; y = 100; w = 1280; h = 720; ssaa = false;
+void LoadWindowConfig(int& x, int& y, int& w, int& h, int& ssaaFactor) {
+    x = 100; y = 100; w = 1280; h = 720; ssaaFactor = 1;
     std::ifstream in(GetConfigDir() + "/window.cfg");
     if (in.is_open()) {
-        int tempSSAA = 0;
-        in >> w >> h >> tempSSAA;
-        ssaa = (tempSSAA == 1);
+        in >> w >> h >> ssaaFactor;
         if (!(in >> x >> y)) {
             x = 100; y = 100;
         }
@@ -158,6 +156,7 @@ void LoadWindowConfig(int& x, int& y, int& w, int& h, bool& ssaa) {
     if (w < 800) w = 800;
     if (h < 600) h = 600;
     if (x <= -32000 || y <= -32000) { x = 100; y = 100; }
+    if (ssaaFactor != 1 && ssaaFactor != 2 && ssaaFactor != 4) ssaaFactor = 1;
 }
 
 } // namespace Utils

@@ -4,8 +4,12 @@
 #include "imgui_impl_opengl3.h"
 #include <imgui_gradient/imgui_gradient.hpp>
 #include <stdio.h>
-#include <GLFW/glfw3.h>
+#include <cmath>
 #include <vector>
+#include <cstdint>
+#include <future>
+#include <mutex>
+#include <GLFW/glfw3.h>
 #include <string>
 #include <algorithm>
 #include <fstream>
@@ -105,13 +109,18 @@ static std::vector<UnicodeBlock> g_UnicodeBlocks = UNICODE_BLOCKS; // Mutable co
 static GLuint g_CheckerTexture = 0;
 // Atlas Interaction
 static std::set<uint32_t> g_ExcludedGlyphs;
-static bool g_PreviewSSAA = false;
+static int g_SSAAFactor = 1; // 1=None, 2=2x, 4=4x
 static int g_HintingMode = 0; // 0 = Smooth (No Hinting), 1 = Sharp (Auto), 2 = Crisp (Normal)
 static bool g_OpenPreferences = false;
 static int g_SelectedGlyphIndex = -1;
 static float g_AtlasZoom = 1.0f;
 static ImVec2 g_AtlasPan = { 0, 0 };
 static bool g_IsPanning = false;
+static bool g_AtlasUpdatePending = false;
+static double g_LastInteractionTime = 0.0;
+const double g_AtlasDebounceTime = 0.8; // Seconds to wait before heavy atlas update
+static bool g_IsGeneratingAtlas = false;
+static std::future<AtlasResult> g_AtlasFuture;
 
 static float g_TextZoom = 1.0f;
 static ImVec2 g_TextPan = { 0, 0 };
@@ -249,6 +258,8 @@ static void SaveStyle(const std::string& path) {
     out << "  \"patternMappingMode\": " << g_PatternMappingMode << ",\n";
 
     out << "  \"exportFilename\": \"" << g_ExportFilename << "\",\n";
+    out << "  \"ssaaFactor\": " << g_SSAAFactor << ",\n";
+    out << "  \"hintingMode\": " << g_HintingMode << ",\n";
     
     // Font Path
     if (g_SelectedFontIndex >= 0 && g_SelectedFontIndex < (int)g_SystemFonts.size()) {
@@ -423,6 +434,12 @@ void LoadStyle(const std::string& path) {
     std::string fname = Utils::ParseStringValue(c, "exportFilename");
     if(!fname.empty()) strncpy(g_ExportFilename, fname.c_str(), sizeof(g_ExportFilename));
     
+    g_SSAAFactor = Utils::ParseIntValue(c, "ssaaFactor", 1);
+    // Legacy support for old boolean previewSSAA
+    if (c.find("\"previewSSAA\": true") != std::string::npos) g_SSAAFactor = 2;
+
+    g_HintingMode = Utils::ParseIntValue(c, "hintingMode", 0);
+    
     // Font Path
     std::string fp = Utils::ParseStringValue(c, "fontPath");
     if(!fp.empty()) {
@@ -520,7 +537,7 @@ AtlasSettings ConstructSettings() {
     settings.padding = g_Padding;
     settings.atlasWidth = g_AtlasWidth;
     settings.atlasHeight = g_AtlasHeight;
-    settings.useSuperSampling = false;
+    settings.superSamplingFactor = g_SSAAFactor;
     settings.hintingMode = g_HintingMode;
     
     // Fill
@@ -614,49 +631,13 @@ AtlasSettings ConstructSettings() {
     settings.globalXOffset = g_GlobalXOffset;
     settings.globalYOffset = g_GlobalYOffset;
 
+    // SSAA
+    settings.superSamplingFactor = g_SSAAFactor;
+
     return settings;
 }
 
-void UpdatePreview(const char* text) {
-    if (!g_FontManager.IsLoaded()) return;
-
-    AtlasSettings settings = ConstructSettings();
-    settings.useSuperSampling = g_PreviewSSAA;
-
-    // 1. Generate Atlas (For Export)
-    // Always uses selected Unicode blocks
-    {
-        // Generate charset
-        std::vector<uint32_t> charset = Utils::DecodeUtf8(g_CustomGlyphsText.c_str());
-        
-        // Remove duplicates
-        std::sort(charset.begin(), charset.end());
-        charset.erase(std::unique(charset.begin(), charset.end()), charset.end());
-        
-        // If no blocks selected, fallback to Basic Latin to prevent empty atlas errors
-        // or confusion, unless intentional. Let's ensure at least ASCII is present if list empty.
-        if (charset.empty()) {
-             // Fallback to Basic Latin (ASCII)
-             for (uint32_t c = 0x0020; c <= 0x007E; c++) {
-                 charset.push_back(c);
-             }
-        }
-        
-        // Filter out excluded glyphs
-        if (!g_ExcludedGlyphs.empty()) {
-            std::vector<uint32_t> filtered;
-            filtered.reserve(charset.size());
-            for (uint32_t c : charset) {
-                if (g_ExcludedGlyphs.find(c) == g_ExcludedGlyphs.end()) {
-                    filtered.push_back(c);
-                }
-            }
-            charset = filtered;
-        }
-        
-        g_LastAtlas = TextureGenerator::GenerateAtlas(g_FontManager, charset, settings);
-    }
-    
+void UpdateAtlasTextures() {
     // Check for errors
     if (g_LastAtlas.hasErrors) {
         g_StatusMessage = g_LastAtlas.errorMessage;
@@ -664,7 +645,7 @@ void UpdatePreview(const char* text) {
         g_StatusIsError = true;
     }
     
-    // Update Atlas Texture
+    // Update Atlas Texture (Must be called on Main Thread)
     if (g_LastAtlas.width > 0 && g_LastAtlas.height > 0) {
         if (g_PreviewTexture) glDeleteTextures(1, &g_PreviewTexture);
         glGenTextures(1, &g_PreviewTexture);
@@ -674,18 +655,15 @@ void UpdatePreview(const char* text) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         g_PreviewWidth = g_LastAtlas.width;
         g_PreviewHeight = g_LastAtlas.height;
-    } else {
-        if (g_PreviewTexture) {
-            glDeleteTextures(1, &g_PreviewTexture);
-            g_PreviewTexture = 0;
-        }
     }
+}
 
-    // 2. Generate Text Preview (Visual Only)
-    // Always uses input text, linearly
+void UpdateTextPreview(const char* text) {
+    if (!g_FontManager.IsLoaded()) return;
+    AtlasSettings settings = ConstructSettings();
+
     g_LastTextPreview = TextureGenerator::GenerateTextPreview(g_FontManager, std::string(text), settings);
     
-    // Update Text Texture
     if (g_LastTextPreview.width > 0 && g_LastTextPreview.height > 0) {
         if (g_TextPreviewTexture) glDeleteTextures(1, &g_TextPreviewTexture);
         glGenTextures(1, &g_TextPreviewTexture);
@@ -693,12 +671,13 @@ void UpdatePreview(const char* text) {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, g_LastTextPreview.width, g_LastTextPreview.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_LastTextPreview.pixels.data());
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    } else {
-        if (g_TextPreviewTexture) {
-            glDeleteTextures(1, &g_TextPreviewTexture);
-            g_TextPreviewTexture = 0;
-        }
     }
+}
+
+void UpdatePreview(const char* text) {
+    UpdateTextPreview(text);
+    g_AtlasUpdatePending = true;
+    g_LastInteractionTime = ImGui::GetTime();
 }
 
 static void glfw_error_callback(int error, const char* description) {
@@ -731,7 +710,7 @@ int main(int, char**) {
 
     // Load Window Config from imgui.ini (geometry) and window.cfg (custom)
     int winW = 1280, winH = 720, winX = 100, winY = 100;
-    Utils::LoadWindowConfig(winX, winY, winW, winH, g_PreviewSSAA);
+    Utils::LoadWindowConfig(winX, winY, winW, winH, g_SSAAFactor);
 
     GLFWwindow* window = glfwCreateWindow(winW, winH, "Fnt Generator", NULL, NULL);
     if (window == NULL)
@@ -806,6 +785,42 @@ int main(int, char**) {
     // Main loop
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
+
+        // 1. Debounce Logic & Async Trigger
+        if (g_AtlasUpdatePending && !g_IsGeneratingAtlas && (ImGui::GetTime() - g_LastInteractionTime) > g_AtlasDebounceTime) {
+            if (g_FontManager.IsLoaded()) {
+                g_IsGeneratingAtlas = true;
+                g_AtlasUpdatePending = false;
+                
+                // Prepare params
+                AtlasSettings settings = ConstructSettings();
+                std::vector<uint32_t> charset = Utils::DecodeUtf8(g_CustomGlyphsText.c_str());
+                std::sort(charset.begin(), charset.end());
+                charset.erase(std::unique(charset.begin(), charset.end()), charset.end());
+                if (charset.empty()) {
+                    for (uint32_t c = 0x20; c <= 0x7E; c++) charset.push_back(c);
+                }
+                if (!g_ExcludedGlyphs.empty()) {
+                    std::vector<uint32_t> filtered;
+                    for (uint32_t c : charset) if (g_ExcludedGlyphs.find(c) == g_ExcludedGlyphs.end()) filtered.push_back(c);
+                    charset = filtered;
+                }
+
+                // Launch Thread
+                g_AtlasFuture = std::async(std::launch::async, [settings, charset]() {
+                    return TextureGenerator::GenerateAtlas(g_FontManager, charset, settings);
+                });
+            }
+        }
+
+        // 2. Async Completion Logic
+        if (g_IsGeneratingAtlas && g_AtlasFuture.valid()) {
+            if (g_AtlasFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                g_LastAtlas = g_AtlasFuture.get();
+                UpdateAtlasTextures();
+                g_IsGeneratingAtlas = false;
+            }
+        }
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -1231,7 +1246,7 @@ int main(int, char**) {
             }
             if (ImGui::CollapsingHeader("Effects: Bevel")) {
                 ImGui::PopStyleColor(3);
-                if (ImGui::Checkbox("Enabled##Bevel", &g_EnableBevel)) {
+                if (ImGui::Checkbox("Enable Bevel##Bevel", &g_EnableBevel)) {
                     UpdatePreview(g_InputText);
                 }
                 if (g_EnableBevel) {
@@ -1347,7 +1362,15 @@ int main(int, char**) {
             }
 
             // Quality Settings
-            if (ImGui::Checkbox("High Quality (SSAA 2x)", &g_PreviewSSAA)) {
+            const char* ssaaOptions[] = { "Standard (1x)", "High Quality (2x)", "Ultra Quality (4x)" };
+            int ssaaIdx = 0;
+            if (g_SSAAFactor == 2) ssaaIdx = 1;
+            else if (g_SSAAFactor == 4) ssaaIdx = 2;
+
+            if (ImGui::Combo("Quality (SSAA)", &ssaaIdx, ssaaOptions, IM_ARRAYSIZE(ssaaOptions))) {
+                if (ssaaIdx == 0) g_SSAAFactor = 1;
+                else if (ssaaIdx == 1) g_SSAAFactor = 2;
+                else if (ssaaIdx == 2) g_SSAAFactor = 4;
                 UpdatePreview(g_InputText);
             }
             // Hinting Selector
@@ -1396,7 +1419,6 @@ int main(int, char**) {
                          g_StatusMessage = "Generating High Quality Atlas...";
                          
                          AtlasSettings hqSettings = ConstructSettings();
-                         hqSettings.useSuperSampling = true;
                          hqSettings.hintingMode = g_HintingMode;
 
                           // Re-generate charset logic
@@ -1553,6 +1575,7 @@ int main(int, char**) {
                         ImGui::Text("Preview generation failed or empty.");
                     }
                     ImGui::PopClipRect();
+
                 }
                 ImGui::EndChild();
 
@@ -1692,6 +1715,29 @@ int main(int, char**) {
                         ImGui::Text("Atlas not generated.");
                     }
                     ImGui::PopClipRect();
+
+                    // Loading Overlay (Drawn last to be on top)
+                    if (g_IsGeneratingAtlas || g_AtlasUpdatePending) {
+                        ImVec2 winPos = ImGui::GetWindowPos();
+                        ImVec2 winSize = ImGui::GetWindowSize();
+                        ImDrawList* dl = ImGui::GetWindowDrawList();
+                        
+                        dl->AddRectFilled(winPos, ImVec2(winPos.x + winSize.x, winPos.y + winSize.y), IM_COL32(0, 0, 0, 150));
+                        
+                        // Spinner
+                        ImVec2 center = ImVec2(winPos.x + winSize.x * 0.5f, winPos.y + winSize.y * 0.5f);
+                        float radius = 20.0f;
+                        float thickness = 4.0f;
+                        float time = (float)ImGui::GetTime();
+                        
+                        dl->PathClear();
+                        dl->PathArcTo(center, radius, time * 6.0f, time * 6.0f + 4.0f, 30);
+                        dl->PathStroke(IM_COL32(255, 255, 0, 255), 0, thickness);
+
+                        std::string loadingText = g_IsGeneratingAtlas ? "UPDATING" : "WAITING";
+                        ImVec2 textSize = ImGui::CalcTextSize(loadingText.c_str());
+                        dl->AddText(ImVec2(center.x - textSize.x * 0.5f, center.y + radius + 10.0f), IM_COL32(255, 255, 255, 255), loadingText.c_str());
+                    }
                 }
                 ImGui::EndChild();
             }
@@ -1731,11 +1777,17 @@ int main(int, char**) {
             ImGui::Text("Application Preferences");
             ImGui::Separator();
             
-            if (ImGui::Checkbox("Enable High Quality Preview (SSAA)", &g_PreviewSSAA)) {
-                UpdatePreview(g_InputText); // Refresh immediately
+            const char* ssaaOptions[] = { "Standard (1x)", "High Quality (2x)", "Ultra Quality (4x)" };
+            int ssaaIdx = 0;
+            if (g_SSAAFactor == 2) ssaaIdx = 1;
+            else if (g_SSAAFactor == 4) ssaaIdx = 2;
+
+            if (ImGui::Combo("Default Preview Quality", &ssaaIdx, ssaaOptions, IM_ARRAYSIZE(ssaaOptions))) {
+                if (ssaaIdx == 0) g_SSAAFactor = 1;
+                else if (ssaaIdx == 1) g_SSAAFactor = 2;
+                else if (ssaaIdx == 2) g_SSAAFactor = 4;
+                UpdatePreview(g_InputText);
             }
-            ImGui::SameLine(); 
-            ImGui::TextDisabled("(May affect performance)");
             
             ImGui::Separator();
             if (ImGui::Button("Close", ImVec2(120, 0))) {
@@ -1761,7 +1813,7 @@ int main(int, char**) {
     int curX, curY;
     glfwGetWindowSize(window, &curW, &curH);
     glfwGetWindowPos(window, &curX, &curY);
-    Utils::SaveWindowConfig(curX, curY, curW, curH, g_PreviewSSAA);
+    Utils::SaveWindowConfig(curX, curY, curW, curH, g_SSAAFactor);
 
     // Cleanup
     ImGui_ImplOpenGL3_Shutdown();
