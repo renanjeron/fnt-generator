@@ -23,6 +23,10 @@
 #include "Utils/StyleUtils.h"
 #include "Utils/UIUtils.h"
 
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
+
 
 
 // --- State Variables ---
@@ -78,6 +82,16 @@ static float g_InnerGlowSize = 5.0f;
 static float g_InnerGlowChoke = 0.0f;
 static float g_InnerGlowColor[4] = {1.0f, 1.0f, 1.0f, 0.5f}; // RGBA
 
+// Pattern
+static bool g_EnablePattern = false;
+static std::string g_PatternPath = "";
+static float g_PatternOpacity = 1.0f;
+static float g_PatternAngle = 0.0f;
+static float g_PatternScale = 1.0f;
+static int g_PatternBlendMode = 0; // BlendMode::Normal
+static int g_PatternMappingMode = 0; // 0=Glyph, 1=Global
+static GLuint g_PatternPreviewTexture = 0;
+
 static char g_FontSearch[128] = ""; // Search filter
 // --- State Variables ---
 // ... (Previous variables)
@@ -125,8 +139,35 @@ void LoadStyle(const std::string& path);
 
 void UpdatePreview(const char* text); // Forward checking
 
+// Header to update the UI texture for pattern preview (Defined here to avoid prototype issues)
+void UpdatePatternPreviewTexture() {
+    if (g_PatternPath.empty()) return;
+    
+    std::vector<uint8_t> pixels;
+    int w, h;
+    if (BitmapUtils::GetPatternPixels(g_PatternPath, pixels, w, h)) {
+        if (g_PatternPreviewTexture != 0) {
+            glDeleteTextures(1, &g_PatternPreviewTexture);
+            g_PatternPreviewTexture = 0;
+        }
+        
+        glGenTextures(1, &g_PatternPreviewTexture);
+        glBindTexture(GL_TEXTURE_2D, g_PatternPreviewTexture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    } else {
+        if (g_PatternPreviewTexture != 0) {
+            glDeleteTextures(1, &g_PatternPreviewTexture);
+            g_PatternPreviewTexture = 0;
+        }
+    }
+}
+
 // Implementation of Style Save/Load (simplified)
-void SaveStyle(const std::string& path) {
+static void SaveStyle(const std::string& path) {
     std::ofstream out(path);
     if (!out.is_open()) return;
     
@@ -190,6 +231,22 @@ void SaveStyle(const std::string& path) {
     out << "  \"bevelType\": " << g_BevelType << ",\n";
     out << "  \"bevelHighlightColor\": [" << g_BevelHighlightColor[0] << ", " << g_BevelHighlightColor[1] << ", " << g_BevelHighlightColor[2] << ", " << g_BevelHighlightColor[3] << "],\n";
     out << "  \"bevelShadowColor\": [" << g_BevelShadowColor[0] << ", " << g_BevelShadowColor[1] << ", " << g_BevelShadowColor[2] << ", " << g_BevelShadowColor[3] << "],\n";
+    
+    // Pattern
+    out << "  \"enablePattern\": " << (g_EnablePattern ? "true" : "false") << ",\n";
+    {
+        std::string escapedPath;
+        for(char c : g_PatternPath) {
+            if(c == '\\') escapedPath += "\\\\";
+            else escapedPath += c;
+        }
+        out << "  \"patternPath\": \"" << escapedPath << "\",\n";
+    }
+    out << "  \"patternOpacity\": " << g_PatternOpacity << ",\n";
+    out << "  \"patternAngle\": " << g_PatternAngle << ",\n";
+    out << "  \"patternScale\": " << g_PatternScale << ",\n";
+    out << "  \"patternBlendMode\": " << g_PatternBlendMode << ",\n";
+    out << "  \"patternMappingMode\": " << g_PatternMappingMode << ",\n";
 
     out << "  \"exportFilename\": \"" << g_ExportFilename << "\",\n";
     
@@ -338,6 +395,20 @@ void LoadStyle(const std::string& path) {
     g_BevelType = Utils::ParseIntValue(c, "bevelType", g_BevelType);
     Utils::ParseColor4(c, "bevelHighlightColor", g_BevelHighlightColor);
     Utils::ParseColor4(c, "bevelShadowColor", g_BevelShadowColor);
+
+    // Pattern
+    g_EnablePattern = Utils::ParseBoolValue(c, "enablePattern", false);
+    g_PatternPath = Utils::ParseStringValue(c, "patternPath");
+    g_PatternOpacity = Utils::ParseFloatValue(c, "patternOpacity", 1.0f);
+    g_PatternAngle = Utils::ParseFloatValue(c, "patternAngle", 0.0f);
+    g_PatternScale = Utils::ParseFloatValue(c, "patternScale", 1.0f);
+    g_PatternBlendMode = Utils::ParseIntValue(c, "patternBlendMode", 0);
+    g_PatternMappingMode = Utils::ParseIntValue(c, "patternMappingMode", 0);
+    
+    // Refresh pattern preview texture if path exists
+    if (!g_PatternPath.empty()) {
+        UpdatePatternPreviewTexture();
+    }
     
     // Legacy support for older styles
     if (c.find("\"bevelColor\"") != std::string::npos) {
@@ -529,6 +600,15 @@ AtlasSettings ConstructSettings() {
     settings.innerGlowColor[2] = (uint8_t)(g_InnerGlowColor[2] * 255);
     settings.innerGlowColor[3] = (uint8_t)(g_InnerGlowColor[3] * 255);
     
+    // Pattern
+    settings.pattern.enabled = g_EnablePattern;
+    settings.pattern.imagePath = g_PatternPath;
+    settings.pattern.opacity = g_PatternOpacity;
+    settings.pattern.angle = g_PatternAngle;
+    settings.pattern.scale = g_PatternScale;
+    settings.pattern.blendMode = static_cast<BlendMode>(g_PatternBlendMode);
+    settings.pattern.mappingMode = static_cast<PatternMapping>(g_PatternMappingMode);
+
     // Char Adjustments
     settings.globalXAdvance = g_GlobalXAdvance;
     settings.globalXOffset = g_GlobalXOffset;
@@ -1188,6 +1268,51 @@ int main(int, char**) {
                     if (ImGui::SliderFloat("Size##InnerGlowSize", &g_InnerGlowSize, 0.0f, 20.0f)) UpdatePreview(g_InputText);
                     if (ImGui::SliderFloat("Choke##InnerGlow", &g_InnerGlowChoke, 0.0f, 100.0f)) UpdatePreview(g_InputText);
                     if (ImGui::ColorEdit4("Color##InnerGlow", g_EnableInnerGlow ? g_InnerGlowColor : g_InnerGlowColor)) UpdatePreview(g_InputText);
+                }
+            } else {
+                ImGui::PopStyleColor(3);
+            }
+
+            // Pattern Overlay
+            if (g_EnablePattern) {
+                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.35f, 0.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.45f, 0.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.0f, 0.55f, 0.0f, 1.0f));
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.15f, 0.25f, 0.35f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.35f, 0.50f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.45f, 0.65f, 1.0f));
+            }
+            if (ImGui::CollapsingHeader("Effects: Pattern")) {
+                ImGui::PopStyleColor(3);
+                if (ImGui::Checkbox("Enable Pattern", &g_EnablePattern)) UpdatePreview(g_InputText);
+                if (g_EnablePattern) {
+                    const char* blendModes[] = { "Normal", "Multiply", "Screen", "Overlay", "Darken", "Lighten", "Color Dodge", "Color Burn", "Hard Light", "Soft Light", "Difference", "Exclusion", "Subtract", "Divide" };
+                    if (ImGui::Combo("Blend Mode##Pattern", &g_PatternBlendMode, blendModes, IM_ARRAYSIZE(blendModes))) UpdatePreview(g_InputText);
+                    if (ImGui::SliderFloat("Opacity##Pattern", &g_PatternOpacity, 0.0f, 1.0f)) UpdatePreview(g_InputText);
+                    
+                    ImGui::Text("Mapping:");
+                    ImGui::SameLine();
+                    if (ImGui::RadioButton("Per Glyph", &g_PatternMappingMode, 0)) UpdatePreview(g_InputText);
+                    ImGui::SameLine();
+                    if (ImGui::RadioButton("Global", &g_PatternMappingMode, 1)) UpdatePreview(g_InputText);
+
+                    if (g_PatternPreviewTexture != 0) {
+                        ImGui::Text("Preview:");
+                        ImGui::Image((ImTextureID)(intptr_t)g_PatternPreviewTexture, ImVec2(128, 128), ImVec2(0,0), ImVec2(1,1), ImVec4(1,1,1,1), ImVec4(1,1,1,0.5f));
+                    }
+
+                    ImGui::Text("File: %s", g_PatternPath.empty() ? "None" : g_PatternPath.c_str());
+                    if (ImGui::Button("Choose Pattern...")) {
+                        std::string path = Utils::PickFileDialog("Images (*.png, *.jpg)\0*.png;*.jpg;*.jpeg\0All Files\0*.*\0");
+                        if (!path.empty()) {
+                            g_PatternPath = path;
+                            UpdatePatternPreviewTexture();
+                            UpdatePreview(g_InputText);
+                        }
+                    }
+                    if (Utils::KnobAngle("Angle##Pattern", &g_PatternAngle, -180.0f, 180.0f)) UpdatePreview(g_InputText);
+                    if (ImGui::SliderFloat("Scale##Pattern", &g_PatternScale, 0.1f, 5.0f)) UpdatePreview(g_InputText);
                 }
             } else {
                 ImGui::PopStyleColor(3);

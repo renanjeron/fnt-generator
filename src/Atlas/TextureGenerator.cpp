@@ -399,6 +399,12 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
             BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
                                    bodyX, bodyY, rc.body, 
                                    settings.fillColor, &settings.fillGradient);
+
+            if (settings.pattern.enabled) {
+                BitmapUtils::ApplyPatternOverlay(result.pixels, result.width, result.height,
+                                                 bodyX, bodyY, rc.body,
+                                                 settings.pattern);
+            }
         };
 
         if (settings.strokePosition == 0) { // Outside
@@ -636,6 +642,12 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
         }
         
         BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX, bodyY, rc.body, settings.fillColor, &settings.fillGradient);
+
+        if (settings.pattern.enabled) {
+            BitmapUtils::ApplyPatternOverlay(result.pixels, result.width, result.height,
+                                             bodyX, bodyY, rc.body,
+                                             settings.pattern);
+        }
 
         // Bevel (Drawn on top)
         if (settings.enableBevel && settings.bevelDistance > 0) {

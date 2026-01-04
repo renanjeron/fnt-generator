@@ -82,6 +82,9 @@ struct AtlasSettings {
     float innerGlowSize = 5.0f;
     float innerGlowChoke = 0.0f; // 0-100, contracts the glow toward center
     uint8_t innerGlowColor[4] = { 255, 255, 255, 128 }; // R,G,B,A
+    
+    // Pattern Overlay
+    PatternData pattern;
 
     // High Quality Export
     bool useSuperSampling = false; // Renders at 2x and downsamples

@@ -21,6 +21,38 @@ struct GradientData {
     std::vector<GradientStop> stops;
 };
 
+enum class BlendMode {
+    Normal = 0,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    ColorDodge,
+    ColorBurn,
+    HardLight,
+    SoftLight,
+    Difference,
+    Exclusion,
+    Subtract,
+    Divide
+};
+
+enum class PatternMapping {
+    Glyph = 0,
+    Global
+};
+
+struct PatternData {
+    bool enabled = false;
+    std::string imagePath;
+    float opacity = 1.0f;
+    float angle = 0.0f;
+    float scale = 1.0f;
+    BlendMode blendMode = BlendMode::Normal;
+    PatternMapping mappingMode = PatternMapping::Glyph;
+};
+
 namespace BitmapUtils {
 
     // Applies a separable Gaussian blur to a single-channel (grayscale) image.
@@ -54,6 +86,15 @@ namespace BitmapUtils {
                    const GlyphBitmap& glyph,
                    float distance, float angle, float spread, float strength, int type,
                    const uint8_t highlightColor[4], const uint8_t shadowColor[4]);
+
+    // Renders a pattern overlay effect
+    void ApplyPatternOverlay(std::vector<uint8_t>& dest, int destW, int destH,
+                             int x, int y,
+                             const GlyphBitmap& glyph,
+                             const PatternData& pattern);
+
+    // Returns the pixels of a cached pattern or loads it. Returns true if successful.
+    bool GetPatternPixels(const std::string& path, std::vector<uint8_t>& outPixels, int& outW, int& outH);
 
     // Fills a rectangle with a semi-transparent color.
     void FillRect(std::vector<uint8_t>& dest, int destW, int destH, 

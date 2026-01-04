@@ -3,8 +3,176 @@
 #include <cmath>
 #include <cstring>
 #include <cstdint>
+#include <vector>
+#include <map>
+#include <mutex>
+
+#include "stb_image.h"
 
 namespace BitmapUtils {
+
+    // Simple cache for pattern images
+    struct CachedImage {
+        std::vector<uint8_t> pixels;
+        int w, h, channels;
+    };
+    static std::map<std::string, CachedImage> g_PatternCache;
+    static std::mutex g_CacheMutex;
+
+    // Blend Helper: Normal blend of two RGBA colors (straight alpha)
+    inline void BlendPixels(uint8_t* dst, uint8_t r, uint8_t g, uint8_t b, float sa) {
+        if (sa <= 0.001f) return;
+        if (sa >= 0.999f) {
+            dst[0] = r; dst[1] = g; dst[2] = b;
+            return;
+        }
+        dst[0] = (uint8_t)(r * sa + dst[0] * (1.0f - sa));
+        dst[1] = (uint8_t)(g * sa + dst[1] * (1.0f - sa));
+        dst[2] = (uint8_t)(b * sa + dst[2] * (1.0f - sa));
+    }
+
+    // Blend Modes Math (0-1 floats)
+    float BlendMultiply(float b, float s) { return b * s; }
+    float BlendScreen(float b, float s) { return b + s - b * s; }
+    float BlendOverlay(float b, float s) { return (b < 0.5f) ? (2.0f * b * s) : (1.0f - 2.0f * (1.0f - b) * (1.0f - s)); }
+    float BlendSoftLight(float b, float s) { return (s < 0.5f) ? (b - (1.0f - 2.0f * s) * b * (1.0f - b)) : (b + (2.0f * s - 1.0f) * (sqrtf(b) - b)); }
+    float BlendHardLight(float b, float s) { return BlendOverlay(s, b); }
+    float BlendDarken(float b, float s) { return std::min(b, s); }
+    float BlendLighten(float b, float s) { return std::max(b, s); }
+    float BlendColorDodge(float b, float s) { return (s >= 1.0f) ? 1.0f : std::min(1.0f, b / (1.0f - s)); }
+    float BlendColorBurn(float b, float s) { return (s <= 0.0f) ? 0.0f : 1.0f - std::min(1.0f, (1.0f - b) / s); }
+
+    bool GetPatternPixels(const std::string& path, std::vector<uint8_t>& outPixels, int& outW, int& outH) {
+        if (path.empty()) return false;
+        
+        std::lock_guard<std::mutex> lock(g_CacheMutex);
+        if (g_PatternCache.count(path)) {
+            const auto& img = g_PatternCache[path];
+            outPixels = img.pixels;
+            outW = img.w; outH = img.h;
+            return true;
+        }
+
+        // Try load
+        FILE* f = fopen(path.c_str(), "rb");
+        if (!f) return false;
+
+        fseek(f, 0, SEEK_END);
+        long size = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        std::vector<uint8_t> fileBuf(size);
+        fread(fileBuf.data(), 1, size, f);
+        fclose(f);
+
+        int w, h, channels;
+        unsigned char* data = stbi_load_from_memory(fileBuf.data(), (int)size, &w, &h, &channels, 4);
+        if (data) {
+            CachedImage ci;
+            ci.w = w; ci.h = h; ci.channels = 4;
+            ci.pixels.assign(data, data + (w * h * 4));
+            stbi_image_free(data);
+            
+            outPixels = ci.pixels;
+            outW = ci.w; outH = ci.h;
+            
+            g_PatternCache[path] = std::move(ci);
+            return true;
+        }
+        return false;
+    }
+
+    void ApplyPatternOverlay(std::vector<uint8_t>& dest, int destW, int destH,
+                             int x, int y,
+                             const GlyphBitmap& glyph,
+                             const PatternData& pattern)
+    {
+        if (glyph.buffer.empty() || glyph.width == 0 || glyph.height == 0) return;
+        if (pattern.imagePath.empty() || !pattern.enabled) return;
+
+        // 1. Get/Cache image
+        std::vector<uint8_t> imgPixels;
+        int imgW, imgH;
+        if (!GetPatternPixels(pattern.imagePath, imgPixels, imgW, imgH)) return;
+
+        // 2. Prep transformations
+        float angRad = pattern.angle * 3.14159265f / 180.0f;
+        float cosA = std::cos(angRad);
+        float sinA = std::sin(angRad);
+        float invScale = 1.0f / (std::max(0.01f, pattern.scale));
+
+        for (int gy = 0; gy < glyph.height; gy++) {
+            for (int gx = 0; gx < glyph.width; gx++) {
+                int dx = x + gx;
+                int dy = y + gy;
+                if (dx < 0 || dx >= destW || dy < 0 || dy >= destH) continue;
+
+                uint8_t alpha = glyph.buffer[gy * glyph.width + gx];
+                if (alpha == 0) continue;
+
+                // 3. Coordinate Transformation (World -> Pattern Space)
+                float rx, ry;
+                if (pattern.mappingMode == PatternMapping::Glyph) {
+                    rx = (float)gx * invScale;
+                    ry = (float)gy * invScale;
+                } else {
+                    rx = (float)dx * invScale;
+                    ry = (float)dy * invScale;
+                }
+
+                // Rotate coordinates
+                float px = rx * cosA + ry * sinA;
+                float py = -rx * sinA + ry * cosA;
+
+                // Tiling (Wrap)
+                int tx = ((int)px % imgW + imgW) % imgW;
+                int ty = ((int)py % imgH + imgH) % imgH;
+
+                int pIdx = (ty * imgW + tx) * 4;
+                uint8_t pr = imgPixels[pIdx + 0];
+                uint8_t pg = imgPixels[pIdx + 1];
+                uint8_t pb = imgPixels[pIdx + 2];
+                uint8_t pa_raw = imgPixels[pIdx + 3];
+
+                float sa = (pa_raw / 255.0f) * pattern.opacity * (alpha / 255.0f);
+                if (sa <= 0.001f) continue;
+
+                int dIdx = (dy * destW + dx) * 4;
+                uint8_t dr = dest[dIdx + 0];
+                uint8_t dg = dest[dIdx + 1];
+                uint8_t db = dest[dIdx + 2];
+
+                // 4. Blend Modes
+                uint8_t resR = pr, resG = pg, resB = pb;
+                if (pattern.blendMode != BlendMode::Normal) {
+                    auto apply = [&](float b, float s) -> uint8_t {
+                        float res = 0;
+                        switch (pattern.blendMode) {
+                            case BlendMode::Multiply: res = BlendMultiply(b, s); break;
+                            case BlendMode::Screen:   res = BlendScreen(b, s); break;
+                            case BlendMode::Overlay:  res = BlendOverlay(b, s); break;
+                            case BlendMode::Darken:   res = BlendDarken(b, s); break;
+                            case BlendMode::Lighten:  res = BlendLighten(b, s); break;
+                            case BlendMode::ColorDodge: res = BlendColorDodge(b, s); break;
+                            case BlendMode::ColorBurn:  res = BlendColorBurn(b, s); break;
+                            case BlendMode::HardLight: res = BlendHardLight(b, s); break;
+                            case BlendMode::SoftLight: res = BlendSoftLight(b, s); break;
+                            case BlendMode::Difference: res = std::abs(b - s); break;
+                            case BlendMode::Exclusion:  res = b + s - 2.0f * b * s; break;
+                            case BlendMode::Subtract:   res = std::max(0.0f, b - s); break;
+                            case BlendMode::Divide:     res = (s <= 0.0f) ? 1.0f : std::min(1.0f, b / s); break;
+                            default: res = s; break;
+                        }
+                        return (uint8_t)(res * 255.0f);
+                    };
+                    resR = apply(dr / 255.0f, pr / 255.0f);
+                    resG = apply(dg / 255.0f, pg / 255.0f);
+                    resB = apply(db / 255.0f, pb / 255.0f);
+                }
+
+                BlendPixels(&dest[dIdx], resR, resG, resB, sa);
+            }
+        }
+    }
 
     void SampleGradient(const std::vector<GradientStop>& stops, float t, uint8_t* outColor) {
         if (stops.empty()) {
