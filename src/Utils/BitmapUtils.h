@@ -48,6 +48,13 @@ namespace BitmapUtils {
                        const GlyphBitmap& glyph,
                        float radius, float choke, const uint8_t color[4]);
 
+    // Renders an advanced lighting-based bevel effect
+    void DrawBevel(std::vector<uint8_t>& dest, int destW, int destH,
+                   int x, int y,
+                   const GlyphBitmap& glyph,
+                   float distance, float angle, float spread, float strength, int type,
+                   const uint8_t highlightColor[4], const uint8_t shadowColor[4]);
+
     // Fills a rectangle with a semi-transparent color.
     void FillRect(std::vector<uint8_t>& dest, int destW, int destH, 
                   int rx, int ry, int rw, int rh, const uint8_t color[4]);

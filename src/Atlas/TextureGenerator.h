@@ -67,12 +67,15 @@ struct AtlasSettings {
     int shadowBlur = 0; // Gaussian blur radius
     uint8_t shadowColor[4] = { 0, 0, 0, 255 }; // R,G,B,A
     
-    // Bevel (3D highlight effect)
+    // Bevel (Advanced Lighting Effect)
     bool enableBevel = false;
-    int bevelAngle = 135; // Light angle in degrees
-    float bevelDistance = 2.0f;
-    int bevelBlur = 0;
-    uint8_t bevelColor[3] = { 255, 255, 255 }; // Highlight color
+    int bevelAngle = 135;        // Light angle in degrees
+    float bevelDistance = 4.0f;  // Size of the bevel
+    float bevelSpread = 4.0f;    // Softness/Blur of the bevel
+    float bevelStrength = 1.0f;  // Shading intensity
+    int bevelType = 0;           // 0 = Inner, 1 = Outer
+    uint8_t bevelHighlightColor[4] = { 255, 255, 255, 255 };
+    uint8_t bevelShadowColor[4] = { 0, 0, 0, 255 };
     
     // Inner Glow
     bool enableInnerGlow = false;

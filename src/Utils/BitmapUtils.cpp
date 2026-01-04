@@ -255,6 +255,73 @@ void DrawInnerGlow(std::vector<uint8_t>& dest, int destW, int destH,
     }
 }
 
+void DrawBevel(std::vector<uint8_t>& dest, int destW, int destH,
+               int x, int y,
+               const GlyphBitmap& glyph,
+               float distance, float angle, float spread, float strength, int type,
+               const uint8_t highlightColor[4], const uint8_t shadowColor[4])
+{
+    if (glyph.buffer.empty() || glyph.width == 0 || glyph.height == 0) return;
+    if (distance <= 0.1f) return;
+
+    // 1. Create Heightmap (Blurred alpha)
+    // Spread controls the "roundness" of the edges
+    float blurRadius = std::max(1.0f, spread);
+    std::vector<uint8_t> heightmap = ApplyGaussianBlur(glyph.buffer, glyph.width, glyph.height, blurRadius);
+
+    // 2. Light Direction
+    float angRad = angle * 3.14159265f / 180.0f;
+    float lx = std::cos(angRad);
+    float ly = std::sin(angRad);
+
+    for (int gy = 0; gy < glyph.height; gy++) {
+        for (int gx = 0; gx < glyph.width; gx++) {
+            int dx = x + gx;
+            int dy = y + gy;
+            if (dx < 0 || dx >= destW || dy < 0 || dy >= destH) continue;
+
+            // Masking
+            uint8_t alpha = glyph.buffer[gy * glyph.width + gx];
+            if (type == 0 && alpha == 0) continue; // Inner: only on glyph
+            if (type == 1 && alpha > 128) continue; // Outer: only outside (simplified)
+
+            // 3. Normal Calculation (Central Differences)
+            float nx = 0, ny = 0;
+            if (gx > 0 && gx < glyph.width - 1)
+                nx = (heightmap[gy * glyph.width + (gx + 1)] - heightmap[gy * glyph.width + (gx - 1)]) / 255.0f;
+            if (gy > 0 && gy < glyph.height - 1)
+                ny = (heightmap[(gy + 1) * glyph.width + gx] - heightmap[(gy - 1) * glyph.width + gx]) / 255.0f;
+
+            // 4. Lighting Calculation (Facing light = highlight)
+            // Photoshop-style: dot is positive when surface faces light
+            float dot = -(nx * lx + ny * ly) * strength * (distance / 5.0f);
+            
+            if (std::abs(dot) < 0.001f) continue;
+
+            const uint8_t* col = (dot > 0) ? highlightColor : shadowColor;
+            float intensity = std::abs(dot);
+            if (intensity > 1.0f) intensity = 1.0f;
+
+            // Blend
+            int idx = (dy * destW + dx) * 4;
+            float sa = (col[3] / 255.0f) * intensity;
+            
+            if (type == 0) {
+                 // Inner: Restricted by glyph alpha
+                 sa *= (alpha / 255.0f);
+            } else {
+                 // Outer: Bevel adds its own alpha
+                 uint8_t newA = (uint8_t)std::min(255.0f, dest[idx+3] + sa * 255.0f);
+                 dest[idx+3] = newA;
+            }
+
+            dest[idx + 0] = (uint8_t)(col[0] * sa + dest[idx + 0] * (1.0f - sa));
+            dest[idx + 1] = (uint8_t)(col[1] * sa + dest[idx + 1] * (1.0f - sa));
+            dest[idx + 2] = (uint8_t)(col[2] * sa + dest[idx + 2] * (1.0f - sa));
+        }
+    }
+}
+
 void FillRect(std::vector<uint8_t>& dest, int destW, int destH, 
               int rx, int ry, int rw, int rh, const uint8_t color[4])
 {

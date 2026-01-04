@@ -31,7 +31,7 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
         highSettings.shadowOffsetY *= 2;
         highSettings.shadowBlur *= 2;
         highSettings.bevelDistance *= 2.0f;
-        highSettings.bevelBlur *= 2;
+        highSettings.bevelSpread *= 2.0f;
         highSettings.innerGlowSize *= 2.0f;
         
         AtlasResult highRes = GenerateAtlas(fontManager, charset, highSettings);
@@ -375,21 +375,6 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
                                         settings.shadowColor, nullptr);
              }
         }
-        
-        // B. Bevel
-        if (settings.enableBevel && settings.bevelDistance > 0) {
-             float angleRad = settings.bevelAngle * 3.14159f / 180.0f;
-             int hOffX = (int)(cos(angleRad) * settings.bevelDistance);
-             int hOffY = (int)(sin(angleRad) * settings.bevelDistance);
-             int bodyX = penX + rc.body.bearingX;
-             int bodyY = penY - rc.body.bearingY;
-             
-             uint8_t shadowCol[4] = {0,0,0,80};
-             BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX - hOffX, bodyY - hOffY, rc.body, shadowCol, nullptr);
-             
-             uint8_t highCol[4] = {settings.bevelColor[0], settings.bevelColor[1], settings.bevelColor[2], 100};
-             BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX + hOffX, bodyY + hOffY, rc.body, highCol, nullptr);
-        }
 
         // C. Stroke
         // Composition (Body & Stroke)
@@ -422,6 +407,16 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
         } else { // Center or Inside
             DrawBody();
             DrawStroke();
+        }
+
+        // B. Bevel (Drawn on top to shade the body/stroke)
+        if (settings.enableBevel && settings.bevelDistance > 0) {
+            BitmapUtils::DrawBevel(result.pixels, result.width, result.height,
+                                   penX + rc.body.bearingX, penY - rc.body.bearingY,
+                                   rc.body,
+                                   settings.bevelDistance, (float)settings.bevelAngle, 
+                                   settings.bevelSpread, settings.bevelStrength, settings.bevelType,
+                                   settings.bevelHighlightColor, settings.bevelShadowColor);
         }
         
         GlyphPlacement gp;
@@ -468,7 +463,7 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
         highSettings.shadowOffsetY *= 2;
         highSettings.shadowBlur *= 2; // Preview ignores real blur, uses duplicate draw
         highSettings.bevelDistance *= 2.0f;
-        highSettings.bevelBlur *= 2;
+        highSettings.bevelSpread *= 2.0f;
         highSettings.innerGlowSize *= 2.0f;
         
         AtlasResult highRes = GenerateTextPreview(fontManager, text, highSettings);
@@ -628,15 +623,6 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
         }
         
         // Bevel (Body)
-        if (settings.enableBevel && settings.bevelDistance > 0) {
-            float angleRad = settings.bevelAngle * 3.14159f / 180.0f;
-            int hOffX = (int)(cos(angleRad) * settings.bevelDistance);
-            int hOffY = (int)(sin(angleRad) * settings.bevelDistance);
-            uint8_t shCol[4] = {0,0,0,80};
-            uint8_t hiCol[4] = {settings.bevelColor[0], settings.bevelColor[1], settings.bevelColor[2], 100};
-            BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX - hOffX, bodyY - hOffY, rc.body, shCol, nullptr);
-            BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX + hOffX, bodyY + hOffY, rc.body, hiCol, nullptr);
-        }
 
         // Stroke (Real Outline)
         if (settings.enableStroke && settings.strokeWidth > 0) {
@@ -650,6 +636,15 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
         }
         
         BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, bodyX, bodyY, rc.body, settings.fillColor, &settings.fillGradient);
+
+        // Bevel (Drawn on top)
+        if (settings.enableBevel && settings.bevelDistance > 0) {
+            BitmapUtils::DrawBevel(result.pixels, result.width, result.height,
+                                   bodyX, bodyY, rc.body,
+                                   settings.bevelDistance, (float)settings.bevelAngle,
+                                   settings.bevelSpread, settings.bevelStrength, settings.bevelType,
+                                   settings.bevelHighlightColor, settings.bevelShadowColor);
+        }
 
         currentPenX += rc.advance + settings.globalXAdvance;
     }

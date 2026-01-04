@@ -65,9 +65,12 @@ static float g_ShadowColor[4] = {0.0f, 0.0f, 0.0f, 0.5f}; // RGBA
 // Bevel
 static bool g_EnableBevel = false;
 static int g_BevelAngle = 135;
-static float g_BevelDistance = 2.0f;
-static int g_BevelBlur = 0;
-static float g_BevelColor[3] = {1.0f, 1.0f, 1.0f}; // RGB
+static float g_BevelDistance = 4.0f;
+static float g_BevelSpread = 4.0f;
+static float g_BevelStrength = 1.0f;
+static int g_BevelType = 0; // 0=Inner, 1=Outer
+static float g_BevelHighlightColor[4] = {1.0f, 1.0f, 1.0f, 1.0f}; // RGBA
+static float g_BevelShadowColor[4] = {0.0f, 0.0f, 0.0f, 1.0f}; // RGBA
 
 // Inner Glow
 static bool g_EnableInnerGlow = false;
@@ -182,7 +185,11 @@ void SaveStyle(const std::string& path) {
     out << "  \"enableBevel\": " << (g_EnableBevel ? "true" : "false") << ",\n";
     out << "  \"bevelDistance\": " << g_BevelDistance << ",\n";
     out << "  \"bevelAngle\": " << g_BevelAngle << ",\n";
-    out << "  \"bevelColor\": [" << g_BevelColor[0] << ", " << g_BevelColor[1] << ", " << g_BevelColor[2] << "],\n";
+    out << "  \"bevelSpread\": " << g_BevelSpread << ",\n";
+    out << "  \"bevelStrength\": " << g_BevelStrength << ",\n";
+    out << "  \"bevelType\": " << g_BevelType << ",\n";
+    out << "  \"bevelHighlightColor\": [" << g_BevelHighlightColor[0] << ", " << g_BevelHighlightColor[1] << ", " << g_BevelHighlightColor[2] << ", " << g_BevelHighlightColor[3] << "],\n";
+    out << "  \"bevelShadowColor\": [" << g_BevelShadowColor[0] << ", " << g_BevelShadowColor[1] << ", " << g_BevelShadowColor[2] << ", " << g_BevelShadowColor[3] << "],\n";
 
     out << "  \"exportFilename\": \"" << g_ExportFilename << "\",\n";
     
@@ -326,7 +333,21 @@ void LoadStyle(const std::string& path) {
     g_EnableBevel = Utils::ParseBoolValue(c, "enableBevel", g_EnableBevel);
     g_BevelDistance = Utils::ParseFloatValue(c, "bevelDistance", g_BevelDistance);
     g_BevelAngle = Utils::ParseIntValue(c, "bevelAngle", g_BevelAngle);
-    Utils::ParseColor3(c, "bevelColor", g_BevelColor);
+    g_BevelSpread = Utils::ParseFloatValue(c, "bevelSpread", g_BevelSpread);
+    g_BevelStrength = Utils::ParseFloatValue(c, "bevelStrength", g_BevelStrength);
+    g_BevelType = Utils::ParseIntValue(c, "bevelType", g_BevelType);
+    Utils::ParseColor4(c, "bevelHighlightColor", g_BevelHighlightColor);
+    Utils::ParseColor4(c, "bevelShadowColor", g_BevelShadowColor);
+    
+    // Legacy support for older styles
+    if (c.find("\"bevelColor\"") != std::string::npos) {
+        float oldCol[3];
+        Utils::ParseColor3(c, "bevelColor", oldCol);
+        g_BevelHighlightColor[0] = oldCol[0];
+        g_BevelHighlightColor[1] = oldCol[1];
+        g_BevelHighlightColor[2] = oldCol[2];
+        g_BevelHighlightColor[3] = 1.0f;
+    }
     
     std::string fname = Utils::ParseStringValue(c, "exportFilename");
     if(!fname.empty()) strncpy(g_ExportFilename, fname.c_str(), sizeof(g_ExportFilename));
@@ -487,10 +508,17 @@ AtlasSettings ConstructSettings() {
     settings.enableBevel = g_EnableBevel;
     settings.bevelAngle = g_BevelAngle;
     settings.bevelDistance = g_BevelDistance;
-    settings.bevelBlur = g_BevelBlur;
-    settings.bevelColor[0] = (uint8_t)(g_BevelColor[0] * 255);
-    settings.bevelColor[1] = (uint8_t)(g_BevelColor[1] * 255);
-    settings.bevelColor[2] = (uint8_t)(g_BevelColor[2] * 255);
+    settings.bevelSpread = g_BevelSpread;
+    settings.bevelStrength = g_BevelStrength;
+    settings.bevelType = g_BevelType;
+    settings.bevelHighlightColor[0] = (uint8_t)(g_BevelHighlightColor[0] * 255);
+    settings.bevelHighlightColor[1] = (uint8_t)(g_BevelHighlightColor[1] * 255);
+    settings.bevelHighlightColor[2] = (uint8_t)(g_BevelHighlightColor[2] * 255);
+    settings.bevelHighlightColor[3] = (uint8_t)(g_BevelHighlightColor[3] * 255);
+    settings.bevelShadowColor[0] = (uint8_t)(g_BevelShadowColor[0] * 255);
+    settings.bevelShadowColor[1] = (uint8_t)(g_BevelShadowColor[1] * 255);
+    settings.bevelShadowColor[2] = (uint8_t)(g_BevelShadowColor[2] * 255);
+    settings.bevelShadowColor[3] = (uint8_t)(g_BevelShadowColor[3] * 255);
     
     // Inner Glow
     settings.enableInnerGlow = g_EnableInnerGlow;
@@ -1051,7 +1079,17 @@ int main(int, char**) {
 
             // Effects
             ImGui::Separator();
+            if (g_EnableStroke) {
+                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.35f, 0.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.45f, 0.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.0f, 0.55f, 0.0f, 1.0f));
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.15f, 0.25f, 0.35f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.35f, 0.50f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.45f, 0.65f, 1.0f));
+            }
             if (ImGui::CollapsingHeader("Effects: Outline")) {
+                ImGui::PopStyleColor(3);
                 if (ImGui::Checkbox("Enable Outline", &g_EnableStroke)) {
                     UpdatePreview(g_InputText);
                 }
@@ -1073,10 +1111,22 @@ int main(int, char**) {
                          ImGui::Dummy(ImVec2(0, 10));
                     }
                 }
+            } else {
+                ImGui::PopStyleColor(3);
             }
 
             ImGui::Separator();
+            if (g_EnableShadow) {
+                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.35f, 0.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.45f, 0.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.0f, 0.55f, 0.0f, 1.0f));
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.15f, 0.25f, 0.35f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.35f, 0.50f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.45f, 0.65f, 1.0f));
+            }
             if (ImGui::CollapsingHeader("Effects: Shadow")) {
+                ImGui::PopStyleColor(3);
                 if (ImGui::Checkbox("Enable Shadow", &g_EnableShadow)) {
                     UpdatePreview(g_InputText);
                 }
@@ -1086,29 +1136,61 @@ int main(int, char**) {
                     if (ImGui::SliderInt("Blur##Shadow", &g_ShadowBlur, 0, 10)) UpdatePreview(g_InputText);
                     if (ImGui::ColorEdit4("Color##Shadow", g_ShadowColor)) UpdatePreview(g_InputText);
                 }
+            } else {
+                ImGui::PopStyleColor(3);
             }
             
+            if (g_EnableBevel) {
+                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.35f, 0.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.45f, 0.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.0f, 0.55f, 0.0f, 1.0f));
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.15f, 0.25f, 0.35f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.35f, 0.50f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.45f, 0.65f, 1.0f));
+            }
             if (ImGui::CollapsingHeader("Effects: Bevel")) {
-                if (ImGui::Checkbox("Enable Bevel", &g_EnableBevel)) {
+                ImGui::PopStyleColor(3);
+                if (ImGui::Checkbox("Enabled##Bevel", &g_EnableBevel)) {
                     UpdatePreview(g_InputText);
                 }
                 if (g_EnableBevel) {
-                    if (ImGui::SliderInt("Angle##Bevel", &g_BevelAngle, 0, 360)) UpdatePreview(g_InputText);
-                    if (ImGui::SliderFloat("Distance##Bevel", &g_BevelDistance, 0.0f, 10.0f)) UpdatePreview(g_InputText);
-                    if (ImGui::SliderInt("Blur##Bevel", &g_BevelBlur, 0, 10)) UpdatePreview(g_InputText);
-                    if (ImGui::ColorEdit3("Color##Bevel", g_BevelColor)) UpdatePreview(g_InputText);
+                    if (ImGui::SliderFloat("Distance##Bevel", &g_BevelDistance, 0.0f, 20.0f)) UpdatePreview(g_InputText);
+                    if (Utils::KnobAngle("Angle##Bevel", (float*)&g_BevelAngle, -180.0f, 180.0f)) UpdatePreview(g_InputText);
+                    if (ImGui::SliderFloat("Spread##Bevel", &g_BevelSpread, 0.0f, 20.0f)) UpdatePreview(g_InputText);
+                    if (ImGui::SliderFloat("Strength##Bevel", &g_BevelStrength, 0.0f, 10.0f)) UpdatePreview(g_InputText);
+                    
+                    const char* bevelTypes[] = { "Inner", "Outer" };
+                    if (ImGui::Combo("Type##Bevel", &g_BevelType, bevelTypes, IM_ARRAYSIZE(bevelTypes))) UpdatePreview(g_InputText);
+
+                    if (ImGui::ColorEdit4("Highlight color##Bevel", g_BevelHighlightColor)) UpdatePreview(g_InputText);
+                    if (ImGui::ColorEdit4("Shadow color##Bevel", g_BevelShadowColor)) UpdatePreview(g_InputText);
                 }
+            } else {
+                ImGui::PopStyleColor(3);
             }
             
+            if (g_EnableInnerGlow) {
+                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.35f, 0.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.45f, 0.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.0f, 0.55f, 0.0f, 1.0f));
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.15f, 0.25f, 0.35f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.35f, 0.50f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.45f, 0.65f, 1.0f));
+            }
             if (ImGui::CollapsingHeader("Effects: Inner Glow")) {
+                ImGui::PopStyleColor(3);
                 if (ImGui::Checkbox("Enable Inner Glow", &g_EnableInnerGlow)) {
                     UpdatePreview(g_InputText);
                 }
                 if (g_EnableInnerGlow) {
                     if (ImGui::SliderFloat("Size##InnerGlowSize", &g_InnerGlowSize, 0.0f, 20.0f)) UpdatePreview(g_InputText);
                     if (ImGui::SliderFloat("Choke##InnerGlow", &g_InnerGlowChoke, 0.0f, 100.0f)) UpdatePreview(g_InputText);
-                    if (ImGui::ColorEdit4("Color##InnerGlow", g_InnerGlowColor)) UpdatePreview(g_InputText);
+                    if (ImGui::ColorEdit4("Color##InnerGlow", g_EnableInnerGlow ? g_InnerGlowColor : g_InnerGlowColor)) UpdatePreview(g_InputText);
                 }
+            } else {
+                ImGui::PopStyleColor(3);
             }
 
             // Preview Info & Atlas Settings
