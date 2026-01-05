@@ -21,7 +21,15 @@ if not exist build (
 )
 
 cd build
-cmake ..
+
+:: Detect Architecture
+if "%PROCESSOR_ARCHITECTURE%"=="AMD64" (
+    echo Detectado sistema x64. Configurando para x64...
+    cmake .. -A x64
+) else (
+    echo Detectado sistema x86. Configurando para Win32...
+    cmake .. -A Win32
+)
 if %errorlevel% neq 0 (
     echo Erro na configuracao do CMake.
     pause

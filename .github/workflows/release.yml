@@ -19,8 +19,13 @@ jobs:
             artifact_name: FntGenerator-Linux
             asset_name: FntGenerator-Linux.tar.gz
           - os: windows-latest
-            artifact_name: FntGenerator-Windows
-            asset_name: FntGenerator-Windows.zip
+            arch: x64
+            artifact_name: FntGenerator-Windows-x64
+            asset_name: FntGenerator-Windows-x64.zip
+          - os: windows-latest
+            arch: Win32
+            artifact_name: FntGenerator-Windows-x86
+            asset_name: FntGenerator-Windows-x86.zip
           - os: macos-latest
             artifact_name: FntGenerator-macOS
             asset_name: FntGenerator-macOS.zip
@@ -43,7 +48,15 @@ jobs:
 
       # --- Build (Common) ---
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            cmake -B build -A ${{ matrix.arch }} -DCMAKE_BUILD_TYPE=Release
+          elif [ "${{ runner.os }}" == "macOS" ]; then
+            cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+          else
+            cmake -B build -DCMAKE_BUILD_TYPE=Release
+          fi
 
       - name: Build
         run: cmake --build build --config Release
