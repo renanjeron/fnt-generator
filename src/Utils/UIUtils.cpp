@@ -1,5 +1,6 @@
 #include "UIUtils.h"
 #include "PlatformUtils.h"
+#include "JsonUtils.h"
 #include <GLFW/glfw3.h>
 #include <cmath>
 #include <vector>
@@ -102,6 +103,48 @@ void SetWindowIcon(GLFWwindow* window) {
         image.pixels = pixels;
         glfwSetWindowIcon(window, 1, &image);
         stbi_image_free(pixels);
+    }
+}
+
+void ParseGradientStops(const std::string& content, const std::string& key, ImGG::GradientWidget& widget) {
+    size_t pos = content.find("\"" + key + "\"");
+    if (pos == std::string::npos) return;
+    size_t start = content.find("[", pos);
+    if (start == std::string::npos) return;
+
+    int brackets = 0;
+    size_t aEnd = start;
+    for(size_t i=start; i<content.length(); i++) {
+        if(content[i] == '[') brackets++;
+        else if(content[i] == ']') {
+            brackets--;
+            if(brackets == 0) { aEnd = i; break; }
+        }
+    }
+    
+    widget.gradient().clear();
+    std::string block = content.substr(start, aEnd - start + 1);
+    
+    size_t bCur = 0;
+    while(true) {
+        size_t bObj = block.find("{", bCur);
+        if(bObj == std::string::npos) break;
+        size_t bObjClose = block.find("}", bObj);
+        if(bObjClose == std::string::npos) break;
+        
+        std::string item = block.substr(bObj, bObjClose - bObj + 1);
+        float p = Utils::ParseFloatValue(item, "p", 0.0f);
+        float c[4] = {1,1,1,1};
+        Utils::ParseColor4(item, "c", c);
+        
+        widget.gradient().add_mark(ImGG::Mark(ImGG::RelativePosition(p), ImVec4(c[0], c[1], c[2], c[3])));
+        
+        bCur = bObjClose + 1;
+    }
+    
+    if(widget.gradient().get_marks().empty()) {
+        widget.gradient().add_mark(ImGG::Mark(ImGG::RelativePosition(0.0f), ImVec4(0,0,0,1)));
+        widget.gradient().add_mark(ImGG::Mark(ImGG::RelativePosition(1.0f), ImVec4(1,1,1,1)));
     }
 }
 

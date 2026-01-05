@@ -34,6 +34,7 @@
 #include "Utils/JsonUtils.h"
 #include "Utils/StyleUtils.h"
 #include "Utils/UIUtils.h"
+#include "Utils/FontPreviewUtils.h"
 
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE 0x812F
@@ -98,6 +99,9 @@ static int g_InnerGlowBlendMode = 0; // 0 = Normal
 
 // Pattern
 static bool g_EnablePattern = false;
+
+// Font Preview
+static bool g_ShowFontPreview = false;
 static std::string g_PatternPath = "";
 static std::vector<PatImage> g_LoadedPatterns;
 static bool g_ShowPatternSelector = false;
@@ -340,47 +344,6 @@ static void SaveStyle(const std::string& path) {
 
 
 
-void ParseGradientStops(const std::string& content, const std::string& key, ImGG::GradientWidget& widget) {
-    size_t pos = content.find("\"" + key + "\"");
-    if (pos == std::string::npos) return;
-    size_t start = content.find("[", pos);
-    if (start == std::string::npos) return;
-
-    int brackets = 0;
-    size_t aEnd = start;
-    for(size_t i=start; i<content.length(); i++) {
-        if(content[i] == '[') brackets++;
-        else if(content[i] == ']') {
-            brackets--;
-            if(brackets == 0) { aEnd = i; break; }
-        }
-    }
-    
-    widget.gradient().clear();
-    std::string block = content.substr(start, aEnd - start + 1);
-    
-    size_t bCur = 0;
-    while(true) {
-        size_t bObj = block.find("{", bCur);
-        if(bObj == std::string::npos) break;
-        size_t bObjClose = block.find("}", bObj);
-        if(bObjClose == std::string::npos) break;
-        
-        std::string item = block.substr(bObj, bObjClose - bObj + 1);
-        float p = Utils::ParseFloatValue(item, "p", 0.0f);
-        float c[4] = {1,1,1,1};
-        Utils::ParseColor4(item, "c", c);
-        
-        widget.gradient().add_mark(ImGG::Mark(ImGG::RelativePosition(p), ImVec4(c[0], c[1], c[2], c[3])));
-        
-        bCur = bObjClose + 1;
-    }
-    
-    if(widget.gradient().get_marks().empty()) {
-        widget.gradient().add_mark(ImGG::Mark(ImGG::RelativePosition(0.0f), ImVec4(0,0,0,1)));
-        widget.gradient().add_mark(ImGG::Mark(ImGG::RelativePosition(1.0f), ImVec4(1,1,1,1)));
-    }
-}
 
 void LoadStyle(const std::string& path) {
     std::ifstream in(path);
@@ -399,7 +362,7 @@ void LoadStyle(const std::string& path) {
     
     g_FillGradientType = Utils::ParseIntValue(c, "fillGradientType", 0);
     g_FillGradientAngle = Utils::ParseFloatValue(c, "fillGradientAngle", 90.0f);
-    ParseGradientStops(c, "fillGradientStops", g_FillGradientWidget);
+    Utils::ParseGradientStops(c, "fillGradientStops", g_FillGradientWidget);
     
     g_EnableStroke = Utils::ParseBoolValue(c, "enableStroke", false);
     g_StrokeWidth = Utils::ParseFloatValue(c, "strokeWidth", 2.0f);
@@ -408,7 +371,7 @@ void LoadStyle(const std::string& path) {
     g_EnableStrokeGradient = Utils::ParseBoolValue(c, "enableStrokeGradient", false);
     g_StrokeGradientType = Utils::ParseIntValue(c, "strokeGradientType", 0);
     g_StrokeGradientAngle = Utils::ParseFloatValue(c, "strokeGradientAngle", 90.0f);
-    ParseGradientStops(c, "strokeGradientStops", g_StrokeGradientWidget);
+    Utils::ParseGradientStops(c, "strokeGradientStops", g_StrokeGradientWidget);
     
     g_EnableShadow = Utils::ParseBoolValue(c, "enableShadow", g_EnableShadow);
     g_ShadowOffsetX = Utils::ParseIntValue(c, "shadowOffsetX", g_ShadowOffsetX);
@@ -1049,21 +1012,43 @@ int main(int, char**) {
                     
                     bool isFav = IsFavorite(g_SystemFonts[idx].path);
                     
-                    // Star button with color
+                    // Star button
                     ImGui::PushID(idx);
-                    if (isFav) {
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.0f, 1.0f)); // Yellow/Gold
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.25f, 0.0f, 0.5f));
-                    } else {
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f)); // Gray
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.3f));
-                    }
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0,0,0,0));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0,0,0,0));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0,0,0,0));
                     
-                    if (ImGui::SmallButton(isFav ? "[*]" : "[ ]")) {
+                    if (ImGui::Button("##FavBtn", ImVec2(18, 18))) {
                         ToggleFavorite(g_SystemFonts[idx].path);
                     }
+                    ImGui::PopStyleColor(3);
                     
-                    ImGui::PopStyleColor(2);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip(isFav ? "Remove from Favorites" : "Add to Favorites");
+
+                    // Draw Star
+                    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                    ImVec2 p_min = ImGui::GetItemRectMin();
+                    ImVec2 p_max = ImGui::GetItemRectMax();
+                    ImVec2 center = ImVec2((p_min.x + p_max.x) * 0.5f, (p_min.y + p_max.y) * 0.5f);
+                    float radius = 7.0f;
+
+                    ImU32 starColor = isFav ? IM_COL32(255, 215, 0, 255) : IM_COL32(100, 100, 100, 150);
+                    if (ImGui::IsItemHovered()) starColor = isFav ? IM_COL32(255, 230, 50, 255) : IM_COL32(180, 180, 180, 255);
+
+                    ImVec2 starPoints[10];
+                    for(int k=0; k<10; k++) {
+                         float a = (k * 36.0f - 90.0f) * 3.14159f / 180.0f;
+                         float r = (k % 2 == 0) ? radius : radius * 0.45f;
+                         starPoints[k] = ImVec2(center.x + cosf(a) * r, center.y + sinf(a) * r);
+                    }
+
+                    if (isFav) {
+                        for(int k=0; k<10; k++) {
+                            draw_list->AddTriangleFilled(center, starPoints[k], starPoints[(k+1)%10], starColor);
+                        }
+                    }
+                    else draw_list->AddPolyline(starPoints, 10, starColor, true, 1.5f);
+
                     ImGui::PopID();
                     
                     ImGui::SameLine();
@@ -1071,6 +1056,14 @@ int main(int, char**) {
                     // Highlight favorite fonts in the list
                     if (isFav) {
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.8f, 1.0f)); // Slight yellow tint
+                    }
+                    
+                    if (g_ShowFontPreview) {
+                        GLuint tex = Utils::GenerateFontPreview(g_SystemFonts[idx].path);
+                        if (tex != 0) {
+                            ImGui::Image((void*)(intptr_t)tex, ImVec2(40, 20), ImVec2(0,0), ImVec2(1,1), ImVec4(1,1,1,1), ImVec4(1,1,1,0.0f));
+                            ImGui::SameLine();
+                        }
                     }
                     
                     bool is_selected = (g_SelectedFontIndex == idx);
@@ -2311,6 +2304,8 @@ int main(int, char**) {
                 else if (ssaaIdx == 2) g_SSAAFactor = 4;
                 UpdatePreview(g_InputText);
             }
+            
+            ImGui::Checkbox("Show Font Previews in List", &g_ShowFontPreview);
             
             ImGui::Separator();
             if (ImGui::Button("Close", ImVec2(120, 0))) {

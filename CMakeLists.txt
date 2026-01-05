@@ -122,6 +122,7 @@ add_executable(FntGenerator WIN32 MACOSX_BUNDLE
     src/Utils/StyleUtils.cpp
     src/Utils/UIUtils.cpp
     src/Utils/PatLoader.cpp
+    src/Utils/FontPreviewUtils.cpp
     ${IMGUI_SOURCES}
     ${PLATFORM_SOURCES}
     ${IMGUI_GRADIENT_SOURCES}
