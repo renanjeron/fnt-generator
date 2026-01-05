@@ -83,9 +83,10 @@ static float g_BevelShadowColor[4] = {0.0f, 0.0f, 0.0f, 1.0f}; // RGBA
 
 // Inner Glow
 static bool g_EnableInnerGlow = false;
-static float g_InnerGlowSize = 5.0f;
+static float g_InnerGlowSize = 0.0f;
 static float g_InnerGlowChoke = 0.0f;
-static float g_InnerGlowColor[4] = {1.0f, 1.0f, 1.0f, 0.5f}; // RGBA
+static float g_InnerGlowColor[4] = { 1.0f, 1.0f, 1.0f, 0.5f }; // RGBA
+static int g_InnerGlowBlendMode = 0; // 0 = Normal
 
 // Pattern
 static bool g_EnablePattern = false;
@@ -240,6 +241,7 @@ static void SaveStyle(const std::string& path) {
     out << "  \"innerGlowSize\": " << g_InnerGlowSize << ",\n";
     out << "  \"innerGlowChoke\": " << g_InnerGlowChoke << ",\n";
     out << "  \"innerGlowColor\": [" << g_InnerGlowColor[0] << ", " << g_InnerGlowColor[1] << ", " << g_InnerGlowColor[2] << ", " << g_InnerGlowColor[3] << "],\n";
+    out << "  \"innerGlowBlendMode\": " << g_InnerGlowBlendMode << ",\n";
     
     out << "  \"enableBevel\": " << (g_EnableBevel ? "true" : "false") << ",\n";
     out << "  \"bevelDistance\": " << g_BevelDistance << ",\n";
@@ -410,6 +412,7 @@ void LoadStyle(const std::string& path) {
     g_InnerGlowSize = Utils::ParseFloatValue(c, "innerGlowSize", g_InnerGlowSize);
     g_InnerGlowChoke = Utils::ParseFloatValue(c, "innerGlowChoke", g_InnerGlowChoke);
     Utils::ParseColor4(c, "innerGlowColor", g_InnerGlowColor);
+    g_InnerGlowBlendMode = Utils::ParseIntValue(c, "innerGlowBlendMode", 0);
 
     g_EnableBevel = Utils::ParseBoolValue(c, "enableBevel", g_EnableBevel);
     g_BevelDistance = Utils::ParseFloatValue(c, "bevelDistance", g_BevelDistance);
@@ -699,6 +702,7 @@ AtlasSettings ConstructSettings() {
     settings.innerGlowColor[1] = (uint8_t)(g_InnerGlowColor[1] * 255);
     settings.innerGlowColor[2] = (uint8_t)(g_InnerGlowColor[2] * 255);
     settings.innerGlowColor[3] = (uint8_t)(g_InnerGlowColor[3] * 255);
+    settings.innerGlowBlendMode = static_cast<BlendMode>(g_InnerGlowBlendMode);
     
     // Pattern
     settings.pattern.enabled = g_EnablePattern;
@@ -1363,9 +1367,11 @@ int main(int, char**) {
                     UpdatePreview(g_InputText);
                 }
                 if (g_EnableInnerGlow) {
-                    if (ImGui::SliderFloat("Size##InnerGlowSize", &g_InnerGlowSize, 0.0f, 20.0f)) UpdatePreview(g_InputText);
+                    if (ImGui::SliderFloat("Size##InnerGlow", &g_InnerGlowSize, 0.0f, 50.0f)) UpdatePreview(g_InputText);
                     if (ImGui::SliderFloat("Choke##InnerGlow", &g_InnerGlowChoke, 0.0f, 100.0f)) UpdatePreview(g_InputText);
-                    if (ImGui::ColorEdit4("Color##InnerGlow", g_EnableInnerGlow ? g_InnerGlowColor : g_InnerGlowColor)) UpdatePreview(g_InputText);
+                    const char* blendModes[] = { "Normal", "Multiply", "Screen", "Overlay", "Darken", "Lighten", "Color Dodge", "Color Burn", "Hard Light", "Soft Light", "Difference", "Exclusion", "Subtract", "Divide" };
+                    if (ImGui::Combo("Blend Mode##InnerGlow", &g_InnerGlowBlendMode, blendModes, IM_ARRAYSIZE(blendModes))) UpdatePreview(g_InputText);
+                    if (ImGui::ColorEdit4("Color##InnerGlow", g_InnerGlowColor, ImGuiColorEditFlags_AlphaBar)) UpdatePreview(g_InputText);
                 }
             } else {
                 ImGui::PopStyleColor(3);

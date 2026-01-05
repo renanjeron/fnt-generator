@@ -78,7 +78,8 @@ namespace BitmapUtils {
     void DrawInnerGlow(std::vector<uint8_t>& dest, int destW, int destH, 
                        int x, int y,
                        const GlyphBitmap& glyph,
-                       float radius, float choke, const uint8_t color[4]);
+                       float radius, float choke, const uint8_t color[4],
+                       BlendMode blendMode = BlendMode::Normal);
 
     // Renders an advanced lighting-based bevel effect
     void DrawBevel(std::vector<uint8_t>& dest, int destW, int destH,

@@ -65,6 +65,60 @@ namespace BitmapUtils {
     float BlendColorDodge(float b, float s) { return (s >= 1.0f) ? 1.0f : std::min(1.0f, b / (1.0f - s)); }
     float BlendColorBurn(float b, float s) { return (s <= 0.0f) ? 0.0f : 1.0f - std::min(1.0f, (1.0f - b) / s); }
 
+    // Helper to apply blend mode
+    static void ApplyBlend(uint8_t& dr, uint8_t& dg, uint8_t& db, uint8_t& da,
+                           uint8_t sr, uint8_t sg, uint8_t sb, uint8_t sa,
+                           BlendMode mode) 
+    {
+        float bR = sRGBToLinear(dr / 255.0f);
+        float bG = sRGBToLinear(dg / 255.0f);
+        float bB = sRGBToLinear(db / 255.0f);
+        // float bA = da / 255.0f; // Unused in blend calc?
+        float bA = da / 255.0f;
+
+        float sR = sRGBToLinear(sr / 255.0f);
+        float sG = sRGBToLinear(sg / 255.0f);
+        float sB = sRGBToLinear(sb / 255.0f);
+        float sA = sa / 255.0f;
+
+        float rR = bR, rG = bG, rB = bB;
+
+        switch (mode) {
+            case BlendMode::Multiply: rR = BlendMultiply(bR, sR); rG = BlendMultiply(bG, sG); rB = BlendMultiply(bB, sB); break;
+            case BlendMode::Screen: rR = BlendScreen(bR, sR); rG = BlendScreen(bG, sG); rB = BlendScreen(bB, sB); break;
+            case BlendMode::Overlay: rR = BlendOverlay(bR, sR); rG = BlendOverlay(bG, sG); rB = BlendOverlay(bB, sB); break;
+            case BlendMode::Darken: rR = BlendDarken(bR, sR); rG = BlendDarken(bG, sG); rB = BlendDarken(bB, sB); break;
+            case BlendMode::Lighten: rR = BlendLighten(bR, sR); rG = BlendLighten(bG, sG); rB = BlendLighten(bB, sB); break;
+            case BlendMode::ColorDodge: rR = BlendColorDodge(bR, sR); rG = BlendColorDodge(bG, sG); rB = BlendColorDodge(bB, sB); break;
+            case BlendMode::ColorBurn: rR = BlendColorBurn(bR, sR); rG = BlendColorBurn(bG, sG); rB = BlendColorBurn(bB, sB); break;
+            case BlendMode::HardLight: rR = BlendHardLight(bR, sR); rG = BlendHardLight(bG, sG); rB = BlendHardLight(bB, sB); break;
+            case BlendMode::SoftLight: rR = BlendSoftLight(bR, sR); rG = BlendSoftLight(bG, sG); rB = BlendSoftLight(bB, sB); break;
+            case BlendMode::Difference: rR = std::abs(bR - sR); rG = std::abs(bG - sG); rB = std::abs(bB - sB); break; // Simple diff
+            case BlendMode::Exclusion: rR = bR + sR - 2.0f * bR * sR; rG = bG + sG - 2.0f * bG * sG; rB = bB + sB - 2.0f * bB * sB; break;
+            case BlendMode::Subtract: rR = std::max(0.0f, bR - sR); rG = std::max(0.0f, bG - sG); rB = std::max(0.0f, bB - sB); break;
+            case BlendMode::Divide: rR = (sR > 0.0f) ? std::min(1.0f, bR / sR) : 1.0f; rG = (sG > 0.0f) ? std::min(1.0f, bG / sG) : 1.0f; rB = (sB > 0.0f) ? std::min(1.0f, bB / sB) : 1.0f; break;
+            default: rR = sR; rG = sG; rB = sB; break; // Normal (replaces if alpha=1)
+        }
+
+        // Output Alpha (Union)
+        float outA = sA + bA * (1.0f - sA);
+        if (outA <= 0.0f) {
+            da = 0; dr = 0; dg = 0; db = 0;
+            return;
+        }
+
+        // Mix blended color with original based on Source Alpha (sA) (standard compositing)
+        // Dest = Dest * (1-sa) + Blended * sa
+        float fR = (1.0f - sA) * bR + sA * rR;
+        float fG = (1.0f - sA) * bG + sA * rG;
+        float fB = (1.0f - sA) * bB + sA * rB;
+        
+        dr = (uint8_t)(LinearToSRGB(fR) * 255.0f);
+        dg = (uint8_t)(LinearToSRGB(fG) * 255.0f);
+        db = (uint8_t)(LinearToSRGB(fB) * 255.0f);
+        da = (uint8_t)(outA * 255.0f);
+    }
+
     bool GetPatternPixels(const std::string& path, std::vector<uint8_t>& outPixels, int& outW, int& outH) {
         if (path.empty()) return false;
         
@@ -165,34 +219,13 @@ namespace BitmapUtils {
                 uint8_t db = dest[dIdx + 2];
 
                 // 4. Blend Modes
-                uint8_t resR = pr, resG = pg, resB = pb;
                 if (pattern.blendMode != BlendMode::Normal) {
-                    auto apply = [&](float b, float s) -> uint8_t {
-                        float res = 0;
-                        switch (pattern.blendMode) {
-                            case BlendMode::Multiply: res = BlendMultiply(b, s); break;
-                            case BlendMode::Screen:   res = BlendScreen(b, s); break;
-                            case BlendMode::Overlay:  res = BlendOverlay(b, s); break;
-                            case BlendMode::Darken:   res = BlendDarken(b, s); break;
-                            case BlendMode::Lighten:  res = BlendLighten(b, s); break;
-                            case BlendMode::ColorDodge: res = BlendColorDodge(b, s); break;
-                            case BlendMode::ColorBurn:  res = BlendColorBurn(b, s); break;
-                            case BlendMode::HardLight: res = BlendHardLight(b, s); break;
-                            case BlendMode::SoftLight: res = BlendSoftLight(b, s); break;
-                            case BlendMode::Difference: res = std::abs(b - s); break;
-                            case BlendMode::Exclusion:  res = b + s - 2.0f * b * s; break;
-                            case BlendMode::Subtract:   res = std::max(0.0f, b - s); break;
-                            case BlendMode::Divide:     res = (s <= 0.0f) ? 1.0f : std::min(1.0f, b / s); break;
-                            default: res = s; break;
-                        }
-                        return (uint8_t)(res * 255.0f);
-                    };
-                    resR = apply(dr / 255.0f, pr / 255.0f);
-                    resG = apply(dg / 255.0f, pg / 255.0f);
-                    resB = apply(db / 255.0f, pb / 255.0f);
+                    ApplyBlend(dest[dIdx], dest[dIdx+1], dest[dIdx+2], dest[dIdx+3],
+                               pr, pg, pb, (uint8_t)(sa * 255.0f),
+                               pattern.blendMode);
+                } else {
+                    BlendPixels(&dest[dIdx], pr, pg, pb, sa);
                 }
-
-                BlendPixels(&dest[dIdx], resR, resG, resB, sa);
             }
         }
     }
@@ -409,47 +442,80 @@ void BlitGlyph(std::vector<uint8_t>& dest, int destW, int destH,
     }
 }
 
+// Helper to apply blend mode - REMOVED (Moved to top)
+
 void DrawInnerGlow(std::vector<uint8_t>& dest, int destW, int destH, 
                    int x, int y,
                    const GlyphBitmap& glyph,
-                   float radius, float choke, const uint8_t color[4])
+                   float radius, float choke, const uint8_t color[4],
+                   BlendMode blendMode)
 {
     if (radius <= 0) return;
-    int glowRadius = (int)radius;
-    float chokePercent = choke / 100.0f;
+    if (glyph.buffer.empty() || glyph.width == 0 || glyph.height == 0) return;
+
+    // 1. Create Inverted Mask (Inside=0, Outside=255)
+    int w = glyph.width;
+    int h = glyph.height;
+    std::vector<uint8_t> invertedMask(w * h);
+    for (size_t i = 0; i < invertedMask.size(); i++) {
+        // Glyph Buffer: 255 = Solid (Inside), 0 = Transparent (Outside)
+        // Inverted: 0 = Inside, 255 = Outside
+        invertedMask[i] = 255 - glyph.buffer[i];
+    }
+
+    // 2. Blur the Inverted Mask
+    // "Outside" white bleeds into "Inside" black. 
+    // The bleed is the glow mask.
+    std::vector<uint8_t> blurred = ApplyGaussianBlur(invertedMask, w, h, radius);
     
-    for (int gy = 0; gy < glyph.height; gy++) {
-        for (int gx = 0; gx < glyph.width; gx++) {
-            if (gy * glyph.width + gx >= (int)glyph.buffer.size()) continue;
-            if (glyph.buffer[gy * glyph.width + gx] == 0) continue;
+    float chokeVal = choke / 100.0f; 
+    // Remap choke: 0 means normal gradient. 1.0 means hard edge at full distance.
+    // However, blurred distance is non-linear.
+    // Simple enhancement:
+    // If value < choke, it's 0? No, standard choke implies it stays solid longer.
+    // Since we are blurring white inwards:
+    // High values (near 255) are deep outside.
+    // Low values (near 0) are deep inside.
+    // Edge is around 128 (if AA) or gradient.
+    // Actually, "Glow" is the presence of White inside the Black area.
+    // So we use 'blurred' value as intensity.
+    
+    float opac = color[3] / 255.0f;
+
+    for (int gy = 0; gy < h; gy++) {
+        for (int gx = 0; gx < w; gx++) {
+            int idx = gy * w + gx;
             
-            int minDist = glowRadius + 1;
-            for (int dy = -glowRadius; dy <= glowRadius; dy++) {
-                for (int dx = -glowRadius; dx <= glowRadius; dx++) {
-                    int checkY = gy + dy, checkX = gx + dx;
-                    bool isTransparent = false;
-                    if (checkX < 0 || checkX >= glyph.width || checkY < 0 || checkY >= glyph.height) isTransparent = true;
-                    else isTransparent = (glyph.buffer[checkY * glyph.width + checkX] < 128);
-                    
-                    if (isTransparent) {
-                        int dist = (int)sqrt(dx*dx + dy*dy);
-                        if (dist < minDist) minDist = dist;
-                    }
-                }
+            // Clip to Glyph (Internal Only)
+            uint8_t glyphAlpha = glyph.buffer[idx];
+            if (glyphAlpha == 0) continue;
+
+            int dx = x + gx;
+            int dy = y + gy;
+            if (dx < 0 || dx >= destW || dy < 0 || dy >= destH) continue;
+            
+            // Get Glow Intensity from Blurred Inverted Mask
+            uint8_t glowVal = blurred[idx];
+        
+            
+            float gv = glowVal / 255.0f;
+            if (chokeVal > 0.0f) {
+                 // Improved Choke: Linear Gain
+                 // effectively compresses the 0..1 range to 0 .. (1-choke)
+                 // e.g. choke 0.5: range 0..0.5 maps to 0..1. Values > 0.5 become 1.0 (clamped)
+                 
+                 float gain = 1.0f / std::max(0.01f, 1.0f - chokeVal);
+                 gv = std::min(1.0f, gv * gain);
             }
-            float eff = minDist + (glowRadius * chokePercent);
-            if (eff <= glowRadius) {
-                float norm = 1.0f - (eff / (float)glowRadius);
-                uint8_t ga = (uint8_t)(color[3] * norm);
-                int dx = x + gx, dy = y + gy;
-                if (dx >= 0 && dx < destW && dy >= 0 && dy < destH) {
-                    int idx = (dy * destW + dx) * 4;
-                    float sa = ga / 255.0f;
-                    dest[idx + 0] = (uint8_t)(color[0] * sa + dest[idx + 0] * (1.0f - sa));
-                    dest[idx + 1] = (uint8_t)(color[1] * sa + dest[idx + 1] * (1.0f - sa));
-                    dest[idx + 2] = (uint8_t)(color[2] * sa + dest[idx + 2] * (1.0f - sa));
-                }
-            }
+            
+            float finalAlpha = gv * (glyphAlpha / 255.0f) * opac;
+            if (finalAlpha <= 0.005f) continue;
+            
+            // Blend
+            int dstIdx = (dy * destW + dx) * 4;
+            ApplyBlend(dest[dstIdx], dest[dstIdx+1], dest[dstIdx+2], dest[dstIdx+3],
+                       color[0], color[1], color[2], (uint8_t)(finalAlpha * 255.0f),
+                       blendMode);
         }
     }
 }

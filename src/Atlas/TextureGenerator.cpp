@@ -438,13 +438,20 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
                     int bodyY = penY - rc.body.bearingY;
                     
                     if (settings.enableInnerGlow && settings.innerGlowSize > 0) {
-                         BitmapUtils::DrawInnerGlow(result.pixels, result.width, result.height, 
-                                                    bodyX, bodyY, rc.body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor);
+                        // OBS: Inner Glow should be drawn *after* fill to be visible on top (if overlaying)
+                        // Or if it clips... 
+                        // Standard: Fill first, then Inner Glow on top.
                     }
                     
                     BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
                                            bodyX, bodyY, rc.body, 
                                            settings.fillColor, &settings.fillGradient);
+
+                    if (settings.enableInnerGlow && settings.innerGlowSize > 0) {
+                         BitmapUtils::DrawInnerGlow(result.pixels, result.width, result.height, 
+                                                    bodyX, bodyY, rc.body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor,
+                                                    settings.innerGlowBlendMode);
+                    }
 
                     if (settings.pattern.enabled) {
                         BitmapUtils::ApplyPatternOverlay(result.pixels, result.width, result.height,
@@ -731,15 +738,18 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
                     if (settings.enableStroke && settings.strokeWidth > 0) {
                         BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, rc.outlineX, rc.outlineY, rc.outline, settings.strokeColor, &settings.strokeGradient);
                     }
-                    if (settings.enableInnerGlow && settings.innerGlowSize > 0) {
-                        BitmapUtils::DrawInnerGlow(result.pixels, result.width, result.height, rc.bodyX, rc.bodyY, rc.body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor);
-                    }
                     BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, rc.bodyX, rc.bodyY, rc.body, settings.fillColor, &settings.fillGradient);
+                    
+                    if (settings.enableInnerGlow && settings.innerGlowSize > 0) {
+                        BitmapUtils::DrawInnerGlow(result.pixels, result.width, result.height, rc.bodyX, rc.bodyY, rc.body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor, settings.innerGlowBlendMode);
+                    }
                 } else {
-                    if (settings.enableInnerGlow && settings.innerGlowSize > 0) {
-                        BitmapUtils::DrawInnerGlow(result.pixels, result.width, result.height, rc.bodyX, rc.bodyY, rc.body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor);
-                    }
                     BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, rc.bodyX, rc.bodyY, rc.body, settings.fillColor, &settings.fillGradient);
+                    
+                    if (settings.enableInnerGlow && settings.innerGlowSize > 0) {
+                        BitmapUtils::DrawInnerGlow(result.pixels, result.width, result.height, rc.bodyX, rc.bodyY, rc.body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor, settings.innerGlowBlendMode);
+                    }
+                    
                     if (settings.enableStroke && settings.strokeWidth > 0) {
                         BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, rc.outlineX, rc.outlineY, rc.outline, settings.strokeColor, &settings.strokeGradient, (settings.strokePosition == 2));
                     }
