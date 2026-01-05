@@ -8,6 +8,8 @@
 #include <mutex>
 
 #include "stb_image.h"
+#include "stb_image.h"
+#include "stb_image_write.h"
 
 namespace BitmapUtils {
 
@@ -539,6 +541,18 @@ void FillRect(std::vector<uint8_t>& dest, int destW, int destH,
             dest[idx + 3] = (uint8_t)std::min(255.0f, (dest[idx + 3] + sa * 255.0f));
         }
     }
-}
+
+    }
+
+    bool SaveImage(const std::string& path, int width, int height, const std::vector<uint8_t>& pixels) {
+        if (pixels.empty() || width <= 0 || height <= 0) return false;
+        // 4 components for RGBA
+        return stbi_write_png(path.c_str(), width, height, 4, pixels.data(), width * 4) != 0;
+    }
+
+    void ClearPatternCache() {
+        std::lock_guard<std::mutex> lock(g_CacheMutex);
+        g_PatternCache.clear();
+    }
 
 }

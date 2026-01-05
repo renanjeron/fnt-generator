@@ -96,6 +96,12 @@ namespace BitmapUtils {
     // Returns the pixels of a cached pattern or loads it. Returns true if successful.
     bool GetPatternPixels(const std::string& path, std::vector<uint8_t>& outPixels, int& outW, int& outH);
 
+    // Saves an RGBA image buffer to a PNG file.
+    bool SaveImage(const std::string& path, int width, int height, const std::vector<uint8_t>& pixels);
+    
+    // Clears the internal pattern cache
+    void ClearPatternCache();
+
     // Fills a rectangle with a semi-transparent color.
     void FillRect(std::vector<uint8_t>& dest, int destW, int destH, 
                   int rx, int ry, int rw, int rh, const uint8_t color[4]);

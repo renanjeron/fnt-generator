@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <cmath>
 #include <vector>
+#include "Utils/PatLoader.h"
 #include <cstdint>
 #include <future>
 #include <mutex>
@@ -89,11 +90,19 @@ static float g_InnerGlowColor[4] = {1.0f, 1.0f, 1.0f, 0.5f}; // RGBA
 // Pattern
 static bool g_EnablePattern = false;
 static std::string g_PatternPath = "";
+static std::vector<PatImage> g_LoadedPatterns;
+static bool g_ShowPatternSelector = false;
+static std::vector<GLuint> g_PatternThumbnails;
 static float g_PatternOpacity = 1.0f;
 static float g_PatternAngle = 0.0f;
 static float g_PatternScale = 1.0f;
 static int g_PatternBlendMode = 0; // BlendMode::Normal
 static int g_PatternMappingMode = 0; // 0=Glyph, 1=Global
+static std::string g_OriginalPatternPath = "";
+static int g_SelectedPatternIndex = -1;
+static bool g_ShowMissingPatternDialog = false;
+static std::string g_MissingPatternPath = "";
+static bool g_RequestPatternPopup = false; 
 static GLuint g_PatternPreviewTexture = 0;
 
 static char g_FontSearch[128] = ""; // Search filter
@@ -244,12 +253,16 @@ static void SaveStyle(const std::string& path) {
     // Pattern
     out << "  \"enablePattern\": " << (g_EnablePattern ? "true" : "false") << ",\n";
     {
+        std::string pathAndIndex = ""; // Not used, just logic
+        std::string savePath = !g_OriginalPatternPath.empty() ? g_OriginalPatternPath : g_PatternPath;
+        
         std::string escapedPath;
-        for(char c : g_PatternPath) {
+        for(char c : savePath) {
             if(c == '\\') escapedPath += "\\\\";
             else escapedPath += c;
         }
         out << "  \"patternPath\": \"" << escapedPath << "\",\n";
+        out << "  \"patternIndex\": " << g_SelectedPatternIndex << ",\n";
     }
     out << "  \"patternOpacity\": " << g_PatternOpacity << ",\n";
     out << "  \"patternAngle\": " << g_PatternAngle << ",\n";
@@ -409,18 +422,88 @@ void LoadStyle(const std::string& path) {
 
     // Pattern
     g_EnablePattern = Utils::ParseBoolValue(c, "enablePattern", false);
-    g_PatternPath = Utils::ParseStringValue(c, "patternPath");
+    std::string pPath = Utils::ParseStringValue(c, "patternPath");
+    int pIndex = Utils::ParseIntValue(c, "patternIndex", -1);
+    
     g_PatternOpacity = Utils::ParseFloatValue(c, "patternOpacity", 1.0f);
     g_PatternAngle = Utils::ParseFloatValue(c, "patternAngle", 0.0f);
     g_PatternScale = Utils::ParseFloatValue(c, "patternScale", 1.0f);
     g_PatternBlendMode = Utils::ParseIntValue(c, "patternBlendMode", 0);
     g_PatternMappingMode = Utils::ParseIntValue(c, "patternMappingMode", 0);
     
-    // Refresh pattern preview texture if path exists
-    if (!g_PatternPath.empty()) {
-        UpdatePatternPreviewTexture();
+    // Pattern Restoration Logic
+    if (g_EnablePattern && !pPath.empty()) {
+        g_SelectedPatternIndex = pIndex; // Preserve index even if missing
+        
+        if (!std::filesystem::exists(pPath)) {
+             g_MissingPatternPath = pPath;
+             g_ShowMissingPatternDialog = true;
+             // Keep enabled but path empty? Or disable?
+             // Keep enabled so user sees they need to fix it.
+             g_PatternPath = ""; 
+        } else {
+             g_OriginalPatternPath = pPath;
+             
+             std::string ext = std::filesystem::path(pPath).extension().string();
+             std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+             
+             if (ext == ".pat" && pIndex >= 0) {
+                 // Autoload PAT
+                 g_LoadedPatterns = PatLoader::Load(pPath);
+                 if (pIndex < (int)g_LoadedPatterns.size()) {
+                     // Regenerate Thumbnails
+                      for (auto& t : g_PatternThumbnails) glDeleteTextures(1, &t);
+                      g_PatternThumbnails.clear();
+                      for (const auto& pat : g_LoadedPatterns) {
+                            GLuint tex = 0;
+                            glGenTextures(1, &tex);
+                            glBindTexture(GL_TEXTURE_2D, tex);
+                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, pat.width, pat.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pat.pixels.data());
+                            g_PatternThumbnails.push_back(tex);
+                      }
+                      
+                      // Extract Specifc
+                      const auto& pat = g_LoadedPatterns[pIndex];
+                      
+                      std::string configDir = Utils::GetConfigDir();
+                      std::string tempPath = (std::filesystem::path(configDir) / "temp_pattern.png").string();
+                      
+                      if (BitmapUtils::SaveImage(tempPath, pat.width, pat.height, pat.pixels)) {
+                          BitmapUtils::ClearPatternCache();
+                          g_PatternPath = tempPath; // Absolute path is better, but this likely implies absolute if configDir is absolute.
+                          // Actually GetConfigDir usually returns absolute.
+                          // Let's stick to what we have or ensure absolute.
+                          g_PatternPath = std::filesystem::absolute(tempPath).string();
+                      }
+                 } else {
+                     // Index OOB
+                     g_MissingPatternPath = pPath + " (Index invalid)";
+                     g_ShowMissingPatternDialog = true;
+                 }
+             } else {
+                 g_PatternPath = pPath;
+                 // Clear old cache just in case
+                 g_LoadedPatterns.clear();
+                 for (auto& t : g_PatternThumbnails) glDeleteTextures(1, &t);
+                 g_PatternThumbnails.clear();
+             }
+        }
+    } else {
+         g_PatternPath = "";
+         g_LoadedPatterns.clear();
+         for(auto& t : g_PatternThumbnails) glDeleteTextures(1, &t);
+         g_PatternThumbnails.clear();
     }
     
+    // Refresh pattern preview texture if path valid
+    if (!g_PatternPath.empty() && std::filesystem::exists(g_PatternPath)) {
+        UpdatePatternPreviewTexture();
+    } else {
+        if(g_PatternPreviewTexture) { glDeleteTextures(1, &g_PatternPreviewTexture); g_PatternPreviewTexture=0;}
+    }
+
     // Legacy support for older styles
     if (c.find("\"bevelColor\"") != std::string::npos) {
         float oldCol[3];
@@ -1314,18 +1397,69 @@ int main(int, char**) {
 
                     if (g_PatternPreviewTexture != 0) {
                         ImGui::Text("Preview:");
-                        ImGui::Image((ImTextureID)(intptr_t)g_PatternPreviewTexture, ImVec2(128, 128), ImVec2(0,0), ImVec2(1,1), ImVec4(1,1,1,1), ImVec4(1,1,1,0.5f));
+                        ImGui::Image((ImTextureID)(intptr_t)g_PatternPreviewTexture, ImVec2(64, 64), ImVec2(0,0), ImVec2(1,1), ImVec4(1,1,1,1), ImVec4(1,1,1,0.5f));
+                        
+                        if (!g_LoadedPatterns.empty()) {
+                            ImGui::SameLine();
+                            if (ImGui::ArrowButton("##SelectPattern", ImGuiDir_Down)) {
+                                g_RequestPatternPopup = true; // Defer to root scope
+                            }
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Choose another pattern from the file");
+                        }
                     }
 
                     ImGui::Text("File: %s", g_PatternPath.empty() ? "None" : g_PatternPath.c_str());
                     if (ImGui::Button("Choose Pattern...")) {
-                        std::string path = Utils::PickFileDialog("Images (*.png, *.jpg)\0*.png;*.jpg;*.jpeg\0All Files\0*.*\0");
+                        std::string path = Utils::PickFileDialog("Images/Pat (*.png, *.jpg, *.pat)\0*.png;*.jpg;*.jpeg;*.pat\0All Files\0*.*\0");
                         if (!path.empty()) {
-                            g_PatternPath = path;
-                            UpdatePatternPreviewTexture();
-                            UpdatePreview(g_InputText);
+                            // Check extension
+                            std::string ext = std::filesystem::path(path).extension().string();
+                            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                            
+                            
+                            if (ext == ".pat") {
+                                // Load PAT
+                                g_OriginalPatternPath = path;
+                                g_SelectedPatternIndex = -1; // None selected yet? Or default 0?
+                                g_LoadedPatterns = PatLoader::Load(path);
+                                if (!g_LoadedPatterns.empty()) {
+                                    // Generate thumbnails
+                                    for (auto& t : g_PatternThumbnails) glDeleteTextures(1, &t);
+                                    g_PatternThumbnails.clear();
+                                    
+                                    for (const auto& pat : g_LoadedPatterns) {
+                                        GLuint tex = 0;
+                                        glGenTextures(1, &tex);
+                                        glBindTexture(GL_TEXTURE_2D, tex);
+                                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                                        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, pat.width, pat.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pat.pixels.data());
+                                        g_PatternThumbnails.push_back(tex);
+                                    }
+                                    g_ShowPatternSelector = true;
+                                    ImGui::OpenPopup("Select Pattern");
+                                } else {
+                                     g_StatusMessage = "Error: Failed to load .pat file. See pat_debug_log.txt for details.";
+                                     g_StatusTime = ImGui::GetTime();
+                                     g_StatusIsError = true;
+                                }
+                            } else {
+                                // Clear previously loaded patterns
+                                g_LoadedPatterns.clear();
+                                for (auto& t : g_PatternThumbnails) glDeleteTextures(1, &t);
+                                g_PatternThumbnails.clear();
+
+                                g_OriginalPatternPath = path;
+                                g_SelectedPatternIndex = -1;
+                                g_PatternPath = path;
+                                UpdatePatternPreviewTexture();
+                                UpdatePreview(g_InputText);
+                            }
                         }
                     }
+
+                    // Pattern Selector Modal
+
                     if (Utils::KnobAngle("Angle##Pattern", &g_PatternAngle, -180.0f, 180.0f)) UpdatePreview(g_InputText);
                     if (ImGui::SliderFloat("Scale##Pattern", &g_PatternScale, 0.1f, 5.0f)) UpdatePreview(g_InputText);
                 }
@@ -1745,6 +1879,157 @@ int main(int, char**) {
             ImGui::PopStyleColor();
 
             ImGui::End();
+        }
+        
+        // Popups (Moved to global scope to ensure visibility)
+        if (g_RequestPatternPopup) {
+            ImGui::OpenPopup("Select Pattern");
+            g_ShowPatternSelector = true;
+            g_RequestPatternPopup = false;
+        }
+
+        // Center Modal
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        
+        // Limit height to 85% of screen and allow scrolling if needed
+        float maxY = ImGui::GetMainViewport()->WorkSize.y * 0.85f;
+        ImGui::SetNextWindowSizeConstraints(ImVec2(200, 100), ImVec2(FLT_MAX, maxY));
+
+        if (ImGui::BeginPopupModal("Select Pattern", &g_ShowPatternSelector, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Choose a pattern from the file:");
+            ImGui::Separator();
+            
+            ImGuiStyle& style = ImGui::GetStyle();
+            float itemStep = 64.0f + style.ItemSpacing.x;
+            float availW = ImGui::GetMainViewport()->WorkSize.x * 0.9f - style.WindowPadding.x * 2.0f;
+            int cols = (int)(availW / itemStep);
+            if (cols > 5) cols = 5;
+            if (cols < 1) cols = 1;
+
+            for (size_t i = 0; i < g_LoadedPatterns.size(); i++) {
+                ImGui::PushID((int)i);
+                
+                // Adaptive Cols
+                if ((i % cols) != 0) ImGui::SameLine();
+                
+                if (ImGui::ImageButton((ImTextureID)(intptr_t)g_PatternThumbnails[i], ImVec2(64, 64))) {
+                    // Selected! Save to temp file.
+                    g_SelectedPatternIndex = (int)i;
+                    const auto& pat = g_LoadedPatterns[i];
+                    std::string configDir = Utils::GetConfigDir();
+                    std::string tempPath = (std::filesystem::path(configDir) / "temp_pattern.png").string();
+                    
+                    if (BitmapUtils::SaveImage(tempPath, pat.width, pat.height, pat.pixels)) {
+                        BitmapUtils::ClearPatternCache(); // Force reload
+                        g_PatternPath = std::filesystem::absolute(tempPath).string();
+                        
+                        UpdatePatternPreviewTexture();
+                        UpdatePreview(g_InputText);
+                    } else {
+                        // Handle error?
+                        g_StatusMessage = "Failed to save temp pattern file.";
+                        g_StatusTime = ImGui::GetTime();
+                        g_StatusIsError = true;
+                    }
+
+                    g_ShowPatternSelector = false;
+                    ImGui::CloseCurrentPopup();
+                }
+                
+                // Draw Green Border if selected
+                if ((int)i == g_SelectedPatternIndex) {
+                    ImVec2 min = ImGui::GetItemRectMin();
+                    ImVec2 max = ImGui::GetItemRectMax();
+                    ImGui::GetWindowDrawList()->AddRect(min, max, IM_COL32(0, 255, 0, 255), 3.0f, 0, 3.0f);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s (%dx%d)", g_LoadedPatterns[i].name.c_str(), g_LoadedPatterns[i].width, g_LoadedPatterns[i].height);
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndPopup();
+        }
+        
+        if (g_ShowMissingPatternDialog) {
+                ImGui::OpenPopup("Missing Pattern File");
+                g_ShowMissingPatternDialog = false;
+        }
+        
+        if (ImGui::BeginPopupModal("Missing Pattern File", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Could not find the pattern file:");
+            ImGui::TextColored(ImVec4(1,0.3f,0.3f,1), "%s", g_MissingPatternPath.c_str());
+            ImGui::Separator();
+            
+            if (ImGui::Button("Locate File...", ImVec2(120, 0))) {
+                    std::string newPath = Utils::PickFileDialog("Images/Pat (*.png, *.jpg, *.pat)\0*.png;*.jpg;*.jpeg;*.pat\0All Files\0*.*\0");
+                    if (!newPath.empty()) {
+                        // Update State
+                        g_OriginalPatternPath = newPath;
+                        g_PatternPath = newPath; // Temporary assumption
+                        
+                        // Treat as if loaded from file
+                        std::string ext = std::filesystem::path(newPath).extension().string();
+                        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                        
+                        if (ext == ".pat") {
+                            // Load PAT
+                            g_LoadedPatterns = PatLoader::Load(newPath);
+                            if (!g_LoadedPatterns.empty()) {
+                                // Try to match index
+                                if (g_SelectedPatternIndex < 0 || g_SelectedPatternIndex >= (int)g_LoadedPatterns.size()) {
+                                    g_SelectedPatternIndex = 0;
+                                }
+                                
+                                // thumbnails
+                                for(auto& t : g_PatternThumbnails) glDeleteTextures(1, &t);
+                                g_PatternThumbnails.clear();
+                                for (const auto& pat : g_LoadedPatterns) {
+                                    GLuint tex=0; glGenTextures(1,&tex); glBindTexture(GL_TEXTURE_2D,tex);
+                                    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+                                    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+                                    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,pat.width,pat.height,0,GL_RGBA,GL_UNSIGNED_BYTE,pat.pixels.data());
+                                    g_PatternThumbnails.push_back(tex);
+                                }
+                                
+                                const auto& pat = g_LoadedPatterns[g_SelectedPatternIndex];
+                                std::string configDir = Utils::GetConfigDir();
+                                std::string tempPath = (std::filesystem::path(configDir) / "temp_pattern.png").string();
+
+                                if (BitmapUtils::SaveImage(tempPath, pat.width, pat.height, pat.pixels)) {
+                                    BitmapUtils::ClearPatternCache();
+                                    g_PatternPath = std::filesystem::absolute(tempPath).string();
+                                }
+                            }
+                        } else {
+                            // Simple image
+                            g_LoadedPatterns.clear();
+                            for(auto& t : g_PatternThumbnails) glDeleteTextures(1, &t);
+                            g_PatternThumbnails.clear();
+                            g_SelectedPatternIndex = -1;
+                        }
+                        
+                        if (!g_PatternPath.empty()) {
+                            UpdatePatternPreviewTexture();
+                            UpdatePreview(g_InputText);
+                        }
+                        ImGui::CloseCurrentPopup();
+                    }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Remove Effect", ImVec2(120, 0))) {
+                g_EnablePattern = false;
+                g_PatternPath = "";
+                g_OriginalPatternPath = "";
+                g_SelectedPatternIndex = -1;
+                UpdatePreview(g_InputText);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                    ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
         }
 
         // Handle Recent File Error Popup
