@@ -22,6 +22,7 @@
 #include <fstream>
 #include <sstream>
 #include <set>
+#include <map>
 #include <filesystem>
 
 #include "Utils/PlatformUtils.h"
@@ -1288,6 +1289,31 @@ int main(int, char**) {
 
             // Effects
             ImGui::Separator();
+            // Helper for Header Click Flash
+            static std::map<std::string, float> g_HeaderFlashTimers;
+            auto RenderFlash = [&](const char* id, ImVec2 pos, ImVec2 size) {
+                if (g_HeaderFlashTimers.find(id) != g_HeaderFlashTimers.end()) {
+                    float t = ImGui::GetTime() - g_HeaderFlashTimers[id];
+                    if (t < 0.4f) {
+                        float alpha = 1.0f - (t / 0.4f);
+                        // Pulse size
+                        float pulse = 4.0f * sinf(t * 3.14159f / 0.4f);
+                        ImGui::GetWindowDrawList()->AddRect(
+                            ImVec2(pos.x - pulse, pos.y - pulse),
+                            ImVec2(pos.x + size.x + pulse, pos.y + size.y + pulse),
+                            IM_COL32(255, 255, 255, (int)(255 * alpha)),
+                            4.0f, 0, 2.0f + pulse
+                        );
+                         ImGui::GetWindowDrawList()->AddRect(
+                            ImVec2(pos.x - pulse*0.5f, pos.y - pulse*0.5f),
+                            ImVec2(pos.x + size.x + pulse*0.5f, pos.y + size.y + pulse*0.5f),
+                            IM_COL32(255, 255, 255, (int)(200 * alpha)),
+                            4.0f, 0, 2.0f
+                        );
+                    }
+                }
+            };
+
             if (g_EnableStroke) {
                 ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.35f, 0.0f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.45f, 0.0f, 1.0f));
@@ -1297,31 +1323,51 @@ int main(int, char**) {
                 ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.35f, 0.50f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.45f, 0.65f, 1.0f));
             }
-            if (ImGui::CollapsingHeader("Effects: Outline")) {
-                ImGui::PopStyleColor(3);
-                if (ImGui::Checkbox("Enable Outline", &g_EnableStroke)) {
-                    UpdatePreview(g_InputText);
-                }
-                if (g_EnableStroke) {
-                    if (ImGui::SliderFloat("Width", &g_StrokeWidth, 0.0f, 10.0f)) UpdatePreview(g_InputText);
+            float strokeHStart = ImGui::GetCursorPosY();
+            ImGui::SetNextItemAllowOverlap(); // Vital for the checkbox to work!
+            
+            ImGuiTreeNodeFlags strokeFlags = 0;
+            if (!g_EnableStroke) strokeFlags |= ImGuiTreeNodeFlags_Leaf;
+            
+            bool openStroke = ImGui::CollapsingHeader("Effects: Outline", strokeFlags);
+            // Click detection on disabled header
+            if (!g_EnableStroke && ImGui::IsItemClicked()) {
+                 g_HeaderFlashTimers["Outline"] = ImGui::GetTime();
+            }
+
+            float strokeHEnd = ImGui::GetCursorPosY();
+            ImGui::PopStyleColor(3);
+
+            // Checkbox on top
+            ImGui::SetCursorPos(ImVec2(ImGui::GetContentRegionMax().x - 30, strokeHStart));
+            RenderFlash("Outline", ImGui::GetCursorScreenPos(), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
+
+            ImGui::PushID("EnableOutlineCheck");
+            ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            if (ImGui::Checkbox("##EnableOutline", &g_EnableStroke)) {
+                UpdatePreview(g_InputText);
+            }
+            ImGui::PopStyleColor();
+            ImGui::PopID();
+            ImGui::SetCursorPosY(strokeHEnd); // Restore
+            
+            if (g_EnableStroke && openStroke) {
+                if (ImGui::SliderFloat("Width", &g_StrokeWidth, 0.0f, 10.0f)) UpdatePreview(g_InputText);
                 if (ImGui::Combo("Position##Stroke", &g_StrokePosition, "Outside\0Center\0Inside\0")) UpdatePreview(g_InputText);
                 if (ImGui::Checkbox("Stroke Gradient", &g_EnableStrokeGradient)) UpdatePreview(g_InputText);
                     
-                    if (!g_EnableStrokeGradient) {
-                         if (ImGui::ColorEdit4("Line Color", g_StrokeColor)) UpdatePreview(g_InputText);
-                    } else {
-                         if (ImGui::Combo("Type##Stroke", &g_StrokeGradientType, "Linear\0Radial\0")) UpdatePreview(g_InputText);
-                         if (Utils::KnobAngle("Angle##Stroke", &g_StrokeGradientAngle, -180.0f, 180.0f)) UpdatePreview(g_InputText);
+                if (!g_EnableStrokeGradient) {
+                     if (ImGui::ColorEdit4("Line Color", g_StrokeColor)) UpdatePreview(g_InputText);
+                } else {
+                     if (ImGui::Combo("Type##Stroke", &g_StrokeGradientType, "Linear\0Radial\0")) UpdatePreview(g_InputText);
+                     if (Utils::KnobAngle("Angle##Stroke", &g_StrokeGradientAngle, -180.0f, 180.0f)) UpdatePreview(g_InputText);
 
-                         ImGui::Dummy(ImVec2(0, 5));
-                         if (g_StrokeGradientWidget.widget("Stroke Gradient")) {
-                             UpdatePreview(g_InputText);
-                         }
-                         ImGui::Dummy(ImVec2(0, 10));
-                    }
+                     ImGui::Dummy(ImVec2(0, 5));
+                     if (g_StrokeGradientWidget.widget("Stroke Gradient")) {
+                         UpdatePreview(g_InputText);
+                     }
+                     ImGui::Dummy(ImVec2(0, 10));
                 }
-            } else {
-                ImGui::PopStyleColor(3);
             }
 
             ImGui::Separator();
@@ -1334,19 +1380,37 @@ int main(int, char**) {
                 ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.35f, 0.50f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.45f, 0.65f, 1.0f));
             }
-            if (ImGui::CollapsingHeader("Effects: Shadow")) {
-                ImGui::PopStyleColor(3);
-                if (ImGui::Checkbox("Enable Shadow", &g_EnableShadow)) {
-                    UpdatePreview(g_InputText);
-                }
-                if (g_EnableShadow) {
-                    if (ImGui::SliderInt("Offset X##Shadow", &g_ShadowOffsetX, -20, 20)) UpdatePreview(g_InputText);
-                    if (ImGui::SliderInt("Offset Y##Shadow", &g_ShadowOffsetY, -20, 20)) UpdatePreview(g_InputText);
-                    if (ImGui::SliderInt("Blur##Shadow", &g_ShadowBlur, 0, 10)) UpdatePreview(g_InputText);
-                    if (ImGui::ColorEdit4("Color##Shadow", g_ShadowColor)) UpdatePreview(g_InputText);
-                }
-            } else {
-                ImGui::PopStyleColor(3);
+            float shadowHStart = ImGui::GetCursorPosY();
+            ImGui::SetNextItemAllowOverlap();
+            
+            ImGuiTreeNodeFlags shadowFlags = 0;
+            if (!g_EnableShadow) shadowFlags |= ImGuiTreeNodeFlags_Leaf;
+            
+            bool openShadow = ImGui::CollapsingHeader("Effects: Shadow", shadowFlags);
+            if (!g_EnableShadow && ImGui::IsItemClicked()) {
+                 g_HeaderFlashTimers["Shadow"] = ImGui::GetTime();
+            }
+
+            float shadowHEnd = ImGui::GetCursorPosY();
+            ImGui::PopStyleColor(3);
+
+            ImGui::SetCursorPos(ImVec2(ImGui::GetContentRegionMax().x - 30, shadowHStart));
+            RenderFlash("Shadow", ImGui::GetCursorScreenPos(), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
+
+            ImGui::PushID("EnableShadowCheck");
+            ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            if (ImGui::Checkbox("##EnableShadow", &g_EnableShadow)) {
+                UpdatePreview(g_InputText);
+            }
+            ImGui::PopStyleColor();
+            ImGui::PopID();
+            ImGui::SetCursorPosY(shadowHEnd);
+
+            if (g_EnableShadow && openShadow) {
+                if (ImGui::SliderInt("Offset X##Shadow", &g_ShadowOffsetX, -20, 20)) UpdatePreview(g_InputText);
+                if (ImGui::SliderInt("Offset Y##Shadow", &g_ShadowOffsetY, -20, 20)) UpdatePreview(g_InputText);
+                if (ImGui::SliderInt("Blur##Shadow", &g_ShadowBlur, 0, 10)) UpdatePreview(g_InputText);
+                if (ImGui::ColorEdit4("Color##Shadow", g_ShadowColor)) UpdatePreview(g_InputText);
             }
             
             if (g_EnableBevel) {
@@ -1358,25 +1422,43 @@ int main(int, char**) {
                 ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.35f, 0.50f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.45f, 0.65f, 1.0f));
             }
-            if (ImGui::CollapsingHeader("Effects: Bevel")) {
-                ImGui::PopStyleColor(3);
-                if (ImGui::Checkbox("Enable Bevel##Bevel", &g_EnableBevel)) {
-                    UpdatePreview(g_InputText);
-                }
-                if (g_EnableBevel) {
-                    if (ImGui::SliderFloat("Distance##Bevel", &g_BevelDistance, 0.0f, 20.0f)) UpdatePreview(g_InputText);
-                    if (Utils::KnobAngle("Angle##Bevel", (float*)&g_BevelAngle, -180.0f, 180.0f)) UpdatePreview(g_InputText);
-                    if (ImGui::SliderFloat("Spread##Bevel", &g_BevelSpread, 0.0f, 20.0f)) UpdatePreview(g_InputText);
-                    if (ImGui::SliderFloat("Strength##Bevel", &g_BevelStrength, 0.0f, 10.0f)) UpdatePreview(g_InputText);
-                    
-                    const char* bevelTypes[] = { "Inner", "Outer" };
-                    if (ImGui::Combo("Type##Bevel", &g_BevelType, bevelTypes, IM_ARRAYSIZE(bevelTypes))) UpdatePreview(g_InputText);
+            float bevelHStart = ImGui::GetCursorPosY();
+            ImGui::SetNextItemAllowOverlap();
+            
+            ImGuiTreeNodeFlags bevelFlags = 0;
+            if (!g_EnableBevel) bevelFlags |= ImGuiTreeNodeFlags_Leaf;
+            
+            bool openBevel = ImGui::CollapsingHeader("Effects: Bevel", bevelFlags);
+            if (!g_EnableBevel && ImGui::IsItemClicked()) {
+                 g_HeaderFlashTimers["Bevel"] = ImGui::GetTime();
+            }
 
-                    if (ImGui::ColorEdit4("Highlight color##Bevel", g_BevelHighlightColor)) UpdatePreview(g_InputText);
-                    if (ImGui::ColorEdit4("Shadow color##Bevel", g_BevelShadowColor)) UpdatePreview(g_InputText);
-                }
-            } else {
-                ImGui::PopStyleColor(3);
+            float bevelHEnd = ImGui::GetCursorPosY();
+            ImGui::PopStyleColor(3);
+
+            ImGui::SetCursorPos(ImVec2(ImGui::GetContentRegionMax().x - 30, bevelHStart));
+            RenderFlash("Bevel", ImGui::GetCursorScreenPos(), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
+
+            ImGui::PushID("EnableBevelCheck");
+            ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            if (ImGui::Checkbox("##EnableBevel", &g_EnableBevel)) {
+                UpdatePreview(g_InputText);
+            }
+            ImGui::PopStyleColor();
+            ImGui::PopID();
+            ImGui::SetCursorPosY(bevelHEnd);
+
+            if (g_EnableBevel && openBevel) {
+                if (ImGui::SliderFloat("Distance##Bevel", &g_BevelDistance, 0.0f, 20.0f)) UpdatePreview(g_InputText);
+                if (Utils::KnobAngle("Angle##Bevel", (float*)&g_BevelAngle, -180.0f, 180.0f)) UpdatePreview(g_InputText);
+                if (ImGui::SliderFloat("Spread##Bevel", &g_BevelSpread, 0.0f, 20.0f)) UpdatePreview(g_InputText);
+                if (ImGui::SliderFloat("Strength##Bevel", &g_BevelStrength, 0.0f, 10.0f)) UpdatePreview(g_InputText);
+                
+                const char* bevelTypes[] = { "Inner", "Outer" };
+                if (ImGui::Combo("Type##Bevel", &g_BevelType, bevelTypes, IM_ARRAYSIZE(bevelTypes))) UpdatePreview(g_InputText);
+
+                if (ImGui::ColorEdit4("Highlight color##Bevel", g_BevelHighlightColor)) UpdatePreview(g_InputText);
+                if (ImGui::ColorEdit4("Shadow color##Bevel", g_BevelShadowColor)) UpdatePreview(g_InputText);
             }
             
             if (g_EnableInnerGlow) {
@@ -1388,20 +1470,38 @@ int main(int, char**) {
                 ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.35f, 0.50f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.45f, 0.65f, 1.0f));
             }
-            if (ImGui::CollapsingHeader("Effects: Inner Glow")) {
-                ImGui::PopStyleColor(3);
-                if (ImGui::Checkbox("Enable Inner Glow", &g_EnableInnerGlow)) {
-                    UpdatePreview(g_InputText);
-                }
-                if (g_EnableInnerGlow) {
-                    if (ImGui::SliderFloat("Size##InnerGlow", &g_InnerGlowSize, 0.0f, 50.0f)) UpdatePreview(g_InputText);
-                    if (ImGui::SliderFloat("Choke##InnerGlow", &g_InnerGlowChoke, 0.0f, 100.0f)) UpdatePreview(g_InputText);
-                    const char* blendModes[] = { "Normal", "Multiply", "Screen", "Overlay", "Darken", "Lighten", "Color Dodge", "Color Burn", "Hard Light", "Soft Light", "Difference", "Exclusion", "Subtract", "Divide" };
-                    if (ImGui::Combo("Blend Mode##InnerGlow", &g_InnerGlowBlendMode, blendModes, IM_ARRAYSIZE(blendModes))) UpdatePreview(g_InputText);
-                    if (ImGui::ColorEdit4("Color##InnerGlow", g_InnerGlowColor, ImGuiColorEditFlags_AlphaBar)) UpdatePreview(g_InputText);
-                }
-            } else {
-                ImGui::PopStyleColor(3);
+            float glowHStart = ImGui::GetCursorPosY();
+            ImGui::SetNextItemAllowOverlap();
+            
+            ImGuiTreeNodeFlags glowFlags = 0;
+            if (!g_EnableInnerGlow) glowFlags |= ImGuiTreeNodeFlags_Leaf;
+            
+            bool openGlow = ImGui::CollapsingHeader("Effects: Inner Glow", glowFlags);
+            if (!g_EnableInnerGlow && ImGui::IsItemClicked()) {
+                 g_HeaderFlashTimers["InnerGlow"] = ImGui::GetTime();
+            }
+
+            float glowHEnd = ImGui::GetCursorPosY();
+            ImGui::PopStyleColor(3);
+
+            ImGui::SetCursorPos(ImVec2(ImGui::GetContentRegionMax().x - 30, glowHStart));
+            RenderFlash("InnerGlow", ImGui::GetCursorScreenPos(), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
+
+            ImGui::PushID("EnableGlowCheck");
+            ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            if (ImGui::Checkbox("##EnableInnerGlow", &g_EnableInnerGlow)) {
+                UpdatePreview(g_InputText);
+            }
+            ImGui::PopStyleColor();
+            ImGui::PopID();
+            ImGui::SetCursorPosY(glowHEnd);
+
+            if (g_EnableInnerGlow && openGlow) {
+                if (ImGui::SliderFloat("Size##InnerGlow", &g_InnerGlowSize, 0.0f, 50.0f)) UpdatePreview(g_InputText);
+                if (ImGui::SliderFloat("Choke##InnerGlow", &g_InnerGlowChoke, 0.0f, 100.0f)) UpdatePreview(g_InputText);
+                const char* blendModes[] = { "Normal", "Multiply", "Screen", "Overlay", "Darken", "Lighten", "Color Dodge", "Color Burn", "Hard Light", "Soft Light", "Difference", "Exclusion", "Subtract", "Divide" };
+                if (ImGui::Combo("Blend Mode##InnerGlow", &g_InnerGlowBlendMode, blendModes, IM_ARRAYSIZE(blendModes))) UpdatePreview(g_InputText);
+                if (ImGui::ColorEdit4("Color##InnerGlow", g_InnerGlowColor, ImGuiColorEditFlags_AlphaBar)) UpdatePreview(g_InputText);
             }
 
             // Pattern Overlay
@@ -1414,10 +1514,33 @@ int main(int, char**) {
                 ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.35f, 0.50f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.45f, 0.65f, 1.0f));
             }
-            if (ImGui::CollapsingHeader("Effects: Pattern")) {
-                ImGui::PopStyleColor(3);
-                if (ImGui::Checkbox("Enable Pattern", &g_EnablePattern)) UpdatePreview(g_InputText);
-                if (g_EnablePattern) {
+            float patternHStart = ImGui::GetCursorPosY();
+            ImGui::SetNextItemAllowOverlap();
+            
+            ImGuiTreeNodeFlags patternFlags = 0;
+            if (!g_EnablePattern) patternFlags |= ImGuiTreeNodeFlags_Leaf;
+            
+            bool openPattern = ImGui::CollapsingHeader("Effects: Pattern", patternFlags);
+            if (!g_EnablePattern && ImGui::IsItemClicked()) {
+                 g_HeaderFlashTimers["Pattern"] = ImGui::GetTime();
+            }
+
+            float patternHEnd = ImGui::GetCursorPosY();
+            ImGui::PopStyleColor(3);
+
+            ImGui::SetCursorPos(ImVec2(ImGui::GetContentRegionMax().x - 30, patternHStart));
+            RenderFlash("Pattern", ImGui::GetCursorScreenPos(), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
+            
+            ImGui::PushID("EnablePatternCheck");
+            ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            if (ImGui::Checkbox("##EnablePattern", &g_EnablePattern)) {
+                UpdatePreview(g_InputText);
+            }
+            ImGui::PopStyleColor();
+            ImGui::PopID();
+            ImGui::SetCursorPosY(patternHEnd);
+            
+            if (g_EnablePattern && openPattern) {
                     const char* blendModes[] = { "Normal", "Multiply", "Screen", "Overlay", "Darken", "Lighten", "Color Dodge", "Color Burn", "Hard Light", "Soft Light", "Difference", "Exclusion", "Subtract", "Divide" };
                     if (ImGui::Combo("Blend Mode##Pattern", &g_PatternBlendMode, blendModes, IM_ARRAYSIZE(blendModes))) UpdatePreview(g_InputText);
                     if (ImGui::SliderFloat("Opacity##Pattern", &g_PatternOpacity, 0.0f, 1.0f)) UpdatePreview(g_InputText);
@@ -1493,11 +1616,8 @@ int main(int, char**) {
 
                     // Pattern Selector Modal
 
-                    if (Utils::KnobAngle("Angle##Pattern", &g_PatternAngle, -180.0f, 180.0f)) UpdatePreview(g_InputText);
-                    if (ImGui::SliderFloat("Scale##Pattern", &g_PatternScale, 0.1f, 5.0f)) UpdatePreview(g_InputText);
-                }
-            } else {
-                ImGui::PopStyleColor(3);
+                if (Utils::KnobAngle("Angle##Pattern", &g_PatternAngle, -180.0f, 180.0f)) UpdatePreview(g_InputText);
+                if (ImGui::SliderFloat("Scale##Pattern", &g_PatternScale, 0.1f, 5.0f)) UpdatePreview(g_InputText);
             }
 
             // Preview Info & Atlas Settings
