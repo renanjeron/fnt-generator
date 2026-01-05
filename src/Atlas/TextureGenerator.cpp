@@ -7,14 +7,25 @@
 #include <cstdint>
 #include <future>
 #include <thread>
+#include "Utils/StringUtils.h"
+#include <set>
 
 // Wrapper
 AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std::string& text, const AtlasSettings& settings) {
-    std::vector<uint32_t> charset;
-    for (char c : text) charset.push_back((uint8_t)c);
-    std::sort(charset.begin(), charset.end());
-    charset.erase(std::unique(charset.begin(), charset.end()), charset.end());
-    return GenerateAtlas(fontManager, charset, settings);
+    // Decode UTF-8 correctly
+    std::vector<uint32_t> charset = Utils::DecodeUtf8(text.c_str());
+    
+    // Remove duplicates but PRESERVE ORDER
+    std::vector<uint32_t> uniqueCharset;
+    std::set<uint32_t> seen;
+    uniqueCharset.reserve(charset.size());
+    for(uint32_t c : charset) {
+        if(seen.find(c) == seen.end()) {
+            seen.insert(c);
+            uniqueCharset.push_back(c);
+        }
+    }
+    return GenerateAtlas(fontManager, uniqueCharset, settings);
 }
 
 // Core Implementation
@@ -207,209 +218,185 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
             if (sMaxY > maxY) maxY = sMaxY;
         }
         
-        rc.packingWidth = (maxX - minX) + 2; 
-        rc.packingHeight = (maxY - minY) + 2;
-        rc.penOffsetX = -minX + 1;
-        rc.penOffsetY = -minY + 1;
+        rc.packingWidth = (maxX - minX) + 6; 
+        rc.packingHeight = (maxY - minY) + 6;
+        rc.penOffsetX = -minX + 3;
+        rc.penOffsetY = -minY + 3;
         
         chars.push_back(rc);
     }
     
-    std::sort(chars.begin(), chars.end(), [](const RenderedChar& a, const RenderedChar& b) {
-        // Sort by height descending for better packing
-        return a.packingHeight > b.packingHeight;
-    });
+    if (!settings.keepInputOrder) {
+        std::sort(chars.begin(), chars.end(), [](const RenderedChar& a, const RenderedChar& b) {
+            // Sort by height descending for better packing
+            return a.packingHeight > b.packingHeight;
+        });
+    }
 
-    // 4. Pack Multi-Page
-    int maxPageDim = 4096; // Default safe max
-    if (settings.atlasWidth > 0) maxPageDim = settings.atlasWidth;
+    // 4. Pack Multi-Page with Retry Logic for Auto-Size
     
-    // We will maintain a list of pages. Each page has current dims and packing cursor.
+    // Initial size calculation
+    int currentW = (settings.atlasWidth > 0) ? settings.atlasWidth : 256;
+    int currentH = (settings.atlasHeight > 0) ? settings.atlasHeight : 256;
+    
+    // Heuristic for Auto: Calculate area and start with square
+    // Heuristic for Auto: Calculate area and start with square
+    if (settings.atlasWidth <= 0) {
+        long long totalArea = 0;
+        int maxGlyphW = 0;
+        int maxGlyphH = 0;
+        
+        for(const auto& c : chars) {
+            int pw = c.packingWidth + settings.padding;
+            int ph = c.packingHeight + settings.padding;
+            totalArea += (long long)pw * ph;
+            if (pw > maxGlyphW) maxGlyphW = pw;
+            if (ph > maxGlyphH) maxGlyphH = ph;
+        }
+        
+        // Start larger to account for packing loss (1.5x is usually safe, 2.0x for ordered packing)
+        long long safeArea = (long long)(totalArea * 1.5); 
+        
+        int dim = 128;
+        while((long long)dim * dim < safeArea) dim *= 2;
+        
+        // constraint min dim to largest glyph
+        while(dim < maxGlyphW) dim *= 2;
+        while(dim < maxGlyphH) dim *= 2;
+
+        currentW = std::max(128, dim);
+        
+        if (settings.atlasHeight <= 0) {
+            // Check if rectangular (Landscape) fits
+            // Try W = dim, H = dim/2
+            // Must also respect maxGlyphH
+            int halfH = currentW / 2;
+            if (halfH >= maxGlyphH && (long long)currentW * halfH >= safeArea) {
+                currentH = halfH;
+            } else {
+                currentH = currentW;
+            }
+        }
+    } else if (settings.atlasHeight <= 0) {
+        // Width Fixed, Height Auto.
+        // Ensure starting H is at least enough for largest glyph
+        int maxGlyphH = 0;
+        for(const auto& c : chars) {
+            int ph = c.packingHeight + settings.padding;
+            if (ph > maxGlyphH) maxGlyphH = ph;
+        }
+        while(currentH < maxGlyphH) currentH *= 2;
+    }
+    
+    int maxPageDim = 4096; // Safe limit
+    if (settings.atlasWidth > 0) maxPageDim = settings.atlasWidth; 
+
     struct PageState {
         int id;
-        int width;  // Current width
-        int height; // Current height
+        int width;
+        int height;
         int currentX;
         int currentY;
         int rowHeight;
     };
-
+    
     std::vector<PageState> pageStates;
+
+    bool packingComplete = false;
     
-    // Initial Page
-    int initialW = (settings.atlasWidth > 0) ? settings.atlasWidth : 128;
-    int initialH = (settings.atlasHeight > 0) ? settings.atlasHeight : 128;
-    
-    // If auto, start small
-    if (settings.atlasWidth <= 0) initialW = 128;
-    if (settings.atlasHeight <= 0) initialH = 128;
-
-    pageStates.push_back({0, initialW, initialH, settings.padding, settings.padding, 0});
-
-    // Re-sort back to ID for consistent output? BMFont usually packs loosely or tightly.
-    // For good packing we should sort by height, pack, then we can re-sort glyphs by ID later if needed.
-    // We already sorted by Height above.
-
-    for (auto& rc : chars) {
-        bool fitted = false;
+    while (!packingComplete) {
+        // Reset state for retry
+        pageStates.clear();
+        pageStates.push_back({0, currentW, currentH, settings.padding, settings.padding, 0});
         
-        // Try to fit in existing pages
-        for (auto& page : pageStates) {
-            // Check if fits in current row
-            if (page.currentX + rc.packingWidth + settings.padding <= page.width) {
-                 if (page.currentY + rc.packingHeight + settings.padding <= page.height) {
-                     // Fits!
-                     rc.atlasX = page.currentX;
-                     rc.atlasY = page.currentY;
-                     rc.pageIndex = page.id;
-                     
-                     page.currentX += rc.packingWidth + settings.padding;
-                     if (rc.packingHeight > page.rowHeight) page.rowHeight = rc.packingHeight;
-                     fitted = true;
-                     break;
-                 }
-            } else {
-                // Move to new row
-                if (page.currentY + page.rowHeight + settings.padding + rc.packingHeight + settings.padding <= page.height) {
-                    // Fits in new row?
-                    page.currentX = settings.padding;
-                    page.currentY += page.rowHeight + settings.padding;
-                    page.rowHeight = 0;
-                    
-                    if (page.currentX + rc.packingWidth + settings.padding <= page.width) {
-                        rc.atlasX = page.currentX;
-                        rc.atlasY = page.currentY;
-                        rc.pageIndex = page.id;
-                        
-                        page.currentX += rc.packingWidth + settings.padding;
-                        if (rc.packingHeight > page.rowHeight) page.rowHeight = rc.packingHeight;
-                        fitted = true;
-                        break;
-                    }
-                }
-            }
-        }
+        bool allFit = true;
         
-        if (!fitted) {
-            // Can we grow the last page?
-            auto& lastPage = pageStates.back();
-            // If MultiPage is DISABLED, we MUST allow growing beyond limits to "overflow"
-            bool forceGrow = !settings.allowMultiPage;
+        for (auto& rc : chars) {
+            bool fitted = false;
             
-            bool canGrowW = (settings.atlasWidth <= 0 && lastPage.width < maxPageDim) || forceGrow;
-            bool canGrowH = (settings.atlasHeight <= 0 && lastPage.height < maxPageDim) || forceGrow;
-            
-            if (canGrowW || canGrowH) {
-                // Resize logic (simple POT doubling)
-                int newW = lastPage.width;
-                int newH = lastPage.height;
-                bool grew = false;
-
-                // Simple heuristic: Try doubling width, then height until it fits or hits limit
-                // If forceGrow is true, we ignore maxPageDim limit
-                while (!grew) {
-                    // Safety break
-                    if (newW > 32768 || newH > 32768) break; 
-
-                    if (!forceGrow) {
-                        if (newW >= maxPageDim && newH >= maxPageDim) break;
-                    }
-
-                    if (newW <= newH) {
-                        if (canGrowW) newW *= 2;
-                        else if (canGrowH) newH *= 2;
-                        else break;
-                    } else {
-                        if (canGrowH) newH *= 2;
-                        else if (canGrowW) newW *= 2;
-                        else break;
-                    }
-                    
-                    // Verify if this new size ACTUALLY fits the char
-                    // We don't reset packing, we just expand bounds.
-                    // But wait, if we expand W, the current row might continue?
-                    // Basically simpler: Expand page to NewW/NewH.
-                    // Then try to fit again.
-                    if (lastPage.currentX + rc.packingWidth + settings.padding <= newW && 
-                        lastPage.currentY + rc.packingHeight + settings.padding <= newH) {
-                        grew = true;
-                    } 
-                    // Or check new row
-                    else if (lastPage.currentY + lastPage.rowHeight + settings.padding + rc.packingHeight + settings.padding <= newH) {
-                        grew = true;
-                    }
-                }
-                
-                if (grew) {
-                    lastPage.width = newW;
-                    lastPage.height = newH;
-                    // Retry fitting in this page (recursive or goto?)
-                    // Just repeat the logic inline cause lazy.
-                    
-                    // Try Current Row
-                     if (lastPage.currentX + rc.packingWidth + settings.padding <= lastPage.width &&
-                         lastPage.currentY + rc.packingHeight + settings.padding <= lastPage.height) {
-                         rc.atlasX = lastPage.currentX;
-                         rc.atlasY = lastPage.currentY;
-                         rc.pageIndex = lastPage.id;
-                         lastPage.currentX += rc.packingWidth + settings.padding;
-                         if (rc.packingHeight > lastPage.rowHeight) lastPage.rowHeight = rc.packingHeight;
+            // Try fit in existing pages
+            for (auto& page : pageStates) {
+                // Check if fits in current row
+                if (page.currentX + rc.packingWidth + settings.padding <= page.width) {
+                     if (page.currentY + rc.packingHeight + settings.padding <= page.height) {
+                         // Fits
+                         rc.atlasX = page.currentX;
+                         rc.atlasY = page.currentY;
+                         rc.pageIndex = page.id;
+                         page.currentX += rc.packingWidth + settings.padding;
+                         if (rc.packingHeight > page.rowHeight) page.rowHeight = rc.packingHeight;
                          fitted = true;
-                     } 
-                     // Try New Row
-                     else {
-                         lastPage.currentX = settings.padding;
-                         lastPage.currentY += lastPage.rowHeight + settings.padding;
-                         lastPage.rowHeight = 0;
-                         if (lastPage.currentX + rc.packingWidth + settings.padding <= lastPage.width && 
-                             lastPage.currentY + rc.packingHeight + settings.padding <= lastPage.height) {
-                            rc.atlasX = lastPage.currentX;
-                            rc.atlasY = lastPage.currentY;
-                            rc.pageIndex = lastPage.id;
-                            lastPage.currentX += rc.packingWidth + settings.padding;
-                            if (rc.packingHeight > lastPage.rowHeight) lastPage.rowHeight = rc.packingHeight;
-                            fitted = true;
-                         }
+                         break;
                      }
+                } else {
+                    // New row?
+                    if (page.currentY + page.rowHeight + settings.padding + rc.packingHeight + settings.padding <= page.height) {
+                        page.currentX = settings.padding;
+                        page.currentY += page.rowHeight + settings.padding;
+                        page.rowHeight = 0;
+                        
+                        if (page.currentX + rc.packingWidth + settings.padding <= page.width) {
+                            rc.atlasX = page.currentX;
+                            rc.atlasY = page.currentY;
+                            rc.pageIndex = page.id;
+                            page.currentX += rc.packingWidth + settings.padding;
+                            if (rc.packingHeight > page.rowHeight) page.rowHeight = rc.packingHeight;
+                            fitted = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if (!fitted) {
+                // Failed to fit.
+                // If Auto Size is enabled for Width OR Height, we can try to GROW.
+                // BUT only if we haven't hit MaxDim.
+                bool canGrowW = (settings.atlasWidth <= 0 && currentW < maxPageDim);
+                bool canGrowH = (settings.atlasHeight <= 0 && currentH < maxPageDim);
+                
+                if (canGrowW || canGrowH) {
+                    // Strategy: Keep roughly square, or double?
+                    // If W <= H, double W.
+                    if (currentW <= currentH && canGrowW) currentW *= 2;
+                    else if (canGrowH) currentH *= 2;
+                    else if (canGrowW) currentW *= 2; // Fallback
+                    
+                    allFit = false; 
+                    break; // BREAK INNER LOOP to restart packing with new size
+                } else {
+                    // Cannot grow (Max reached or Fixed Size).
+                    // Add new Page? Only if allowed.
+                    if (settings.allowMultiPage) {
+                        // Create new page
+                        int nextId = (int)pageStates.size();
+                        // Use current sizes for new pages (assuming uniform page size)
+                        pageStates.push_back({nextId, currentW, currentH, settings.padding, settings.padding, 0});
+                        
+                        // Retry fitting this char in the new page
+                        auto& page = pageStates.back();
+                         if (page.currentX + rc.packingWidth + settings.padding <= page.width && 
+                             page.currentY + rc.packingHeight + settings.padding <= page.height) {
+                                rc.atlasX = page.currentX;
+                                rc.atlasY = page.currentY;
+                                rc.pageIndex = page.id;
+                                page.currentX += rc.packingWidth + settings.padding;
+                                if (rc.packingHeight > page.rowHeight) page.rowHeight = rc.packingHeight;
+                                fitted = true;
+                         } else {
+                             rc.skip = true;
+                             // We continue
+                         }
+                    } else {
+                        rc.skip = true;
+                        // We continue
+                    }
                 }
             }
         }
         
-        if (!fitted) {
-            // Must create new page
-            if (!settings.allowMultiPage) {
-                // Should not happen if forceGrow worked, unless char > 32k or memory fail
-                rc.pageIndex = -1; 
-                result.skippedGlyphs++;
-                continue; 
-            }
-
-            int nextId = (int)pageStates.size();
-            int pW = (settings.atlasWidth > 0) ? settings.atlasWidth : 128; // Start small or fixed
-            int pH = (settings.atlasHeight > 0) ? settings.atlasHeight : 128;
-            
-            // Check if char fits in min page? If char is huge (e.g. > 128), start page larger
-            while (pW < rc.packingWidth + settings.padding*2 && pW < maxPageDim) pW *= 2;
-            while (pH < rc.packingHeight + settings.padding*2 && pH < maxPageDim) pH *= 2;
-
-            PageState newPage = {nextId, pW, pH, settings.padding, settings.padding, 0};
-            
-            // It MUST fit here (unless char > maxPageDim, then error or clamp)
-            if (newPage.currentX + rc.packingWidth + settings.padding > newPage.width) {
-                 // Error: Character too large for Max Page Size
-                 rc.skip = true;
-                 result.skippedGlyphs++;
-                 continue; // Skip
-            }
-            
-            rc.atlasX = newPage.currentX;
-            rc.atlasY = newPage.currentY;
-            rc.pageIndex = newPage.id;
-            
-            newPage.currentX += rc.packingWidth + settings.padding;
-            if (rc.packingHeight > newPage.rowHeight) newPage.rowHeight = rc.packingHeight;
-            
-            pageStates.push_back(newPage);
+        if (allFit) {
+            packingComplete = true;
         }
     }
 

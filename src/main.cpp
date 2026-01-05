@@ -552,16 +552,7 @@ void LoadStyle(const std::string& path) {
     g_UseCustomGlyphs = true;
     std::string customText = Utils::ParseStringValue(c, "customGlyphsText");
     if(!customText.empty()) {
-        // Simple unescape for newline
-        std::string unesc;
-        for(size_t i=0; i<customText.size(); i++) {
-            if(customText[i] == '\\' && i+1 < customText.size() && customText[i+1] == 'n') {
-                unesc += '\n'; i++;
-            } else {
-                unesc += customText[i];
-            }
-        }
-        g_CustomGlyphsText = unesc;
+        g_CustomGlyphsText = customText;
     }
     
     g_ExportFormat = Utils::ParseIntValue(c, "exportFormat", 0);
@@ -731,6 +722,7 @@ AtlasSettings ConstructSettings() {
     // Multi Page
     // Only allow multi-page if at least one dimension is Auto (0)
     settings.allowMultiPage = g_AllowMultiPage && (g_AtlasWidth == 0 || g_AtlasHeight == 0);
+    settings.keepInputOrder = true;
 
     return settings;
 }
@@ -1877,7 +1869,15 @@ int main(int, char**) {
                              // Page ID
                              char pageLabel[32];
                              sprintf(pageLabel, "Page %d", (int)i);
-                             draw_list->AddText(ImVec2(pos.x, pos.y - 15), IM_COL32(255, 255, 255, 255), pageLabel);
+                             ImVec2 textPos = ImVec2(pos.x, pos.y - 20);
+                             // Outline
+                             for(int ox=-1; ox<=1; ox++) {
+                                 for(int oy=-1; oy<=1; oy++) {
+                                     if(ox==0 && oy==0) continue;
+                                     draw_list->AddText(ImVec2(textPos.x+ox, textPos.y+oy), IM_COL32(0,0,0,255), pageLabel);
+                                 }
+                             }
+                             draw_list->AddText(textPos, IM_COL32(255, 255, 255, 255), pageLabel);
 
                              // Glyph Hover logic
                              ImVec2 mousePos = ImGui::GetMousePos();

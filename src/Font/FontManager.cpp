@@ -167,17 +167,26 @@ bool FontManager::GetGlyphBounds(uint32_t charCode, GlyphBitmap& outMetrics, FT_
     std::lock_guard<std::mutex> lock(m_mutex);
     if (!m_face) return false;
     
-    // Use NO_BITMAP to avoid rendering
+    // Use NO_BITMAP to avoid rendering, but load the glyph slot
     FT_Int32 flags = loadFlags | FT_LOAD_NO_BITMAP;
     if (FT_Load_Char(m_face, charCode, flags)) return false;
     
-    outMetrics.width = m_face->glyph->metrics.width >> 6;
-    outMetrics.height = m_face->glyph->metrics.height >> 6;
-    outMetrics.bearingX = m_face->glyph->metrics.horiBearingX >> 6;
-    outMetrics.bearingY = m_face->glyph->metrics.horiBearingY >> 6;
+    // Use FT_Get_Glyph to get a standalone glyph object
+    FT_Glyph glyph;
+    if (FT_Get_Glyph(m_face->glyph, &glyph)) return false;
+
+    // Get the exact bounding box in pixels (floors min, ceils max)
+    FT_BBox bbox;
+    FT_Glyph_Get_CBox(glyph, FT_GLYPH_BBOX_PIXELS, &bbox);
+    
+    outMetrics.width = bbox.xMax - bbox.xMin;
+    outMetrics.height = bbox.yMax - bbox.yMin;
+    outMetrics.bearingX = bbox.xMin;
+    outMetrics.bearingY = bbox.yMax;
     outMetrics.advance = m_face->glyph->advance.x >> 6;
     outMetrics.buffer.clear(); // No data
     
+    FT_Done_Glyph(glyph);
     return true;
 }
 

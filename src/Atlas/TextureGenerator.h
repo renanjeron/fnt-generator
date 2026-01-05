@@ -108,6 +108,9 @@ struct AtlasSettings {
     
     // Multi-Page Control
     bool allowMultiPage = true;
+    
+    // Sorting
+    bool keepInputOrder = false;
 };
 
 class TextureGenerator {
