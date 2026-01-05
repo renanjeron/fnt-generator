@@ -42,6 +42,12 @@ public:
 
     // Helper to get kerning between two characters
     int GetKerning(uint32_t left, uint32_t right);
+
+    // Get glyph metrics/bounds without rendering bitmap (buffer will be empty)
+    bool GetGlyphBounds(uint32_t charCode, GlyphBitmap& outMetrics, FT_Int32 loadFlags = FT_LOAD_DEFAULT | FT_LOAD_NO_BITMAP);
+    
+    // Get stroke metrics/bounds without rendering bitmap
+    bool GetGlyphStrokeBounds(uint32_t charCode, float strokeWidth, GlyphBitmap& outMetrics, FT_Int32 loadFlags = FT_LOAD_DEFAULT | FT_LOAD_NO_BITMAP);
     
     // Check if the font validates/contains a specific character code
     bool HasGlyph(uint32_t charCode) const;

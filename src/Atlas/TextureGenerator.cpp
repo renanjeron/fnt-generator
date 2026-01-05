@@ -47,10 +47,6 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
         if (highRes.hasErrors && highRes.skippedGlyphs == 0) return highRes;
         
         AtlasResult result;
-        result.width = highRes.width / factor;
-        result.height = highRes.height / factor;
-        result.atlasWidth = highRes.atlasWidth / factor;
-        result.atlasHeight = highRes.atlasHeight / factor;
         result.hasErrors = highRes.hasErrors;
         result.errorMessage = highRes.errorMessage;
         result.skippedGlyphs = highRes.skippedGlyphs;
@@ -58,44 +54,61 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
         // Downsample Metrics
         result.fontSize = highRes.fontSize / factor;
         result.lineHeight = highRes.lineHeight / factor;
+        result.lineHeight = highRes.lineHeight / factor;
         result.base = highRes.base / factor;
+        result.fontName = highRes.fontName;
 
-        // Downsample Pixels (Box Filter with Alpha Weighting to prevent dark edges)
-        result.pixels.resize(result.width * result.height * 4);
-        for(int y=0; y<result.height; y++) {
-            for(int x=0; x<result.width; x++) {
-                int baseDest = (y*result.width + x)*4;
-                
-                int sumR = 0, sumG = 0, sumB = 0, sumA = 0;
-                int totalAlpha = 0;
+        // Downsample Pages
+        for (const auto& highPage : highRes.pages) {
+            AtlasPage page;
+            page.id = highPage.id;
+            page.width = highPage.width / factor;
+            page.height = highPage.height / factor;
+            
+            try {
+                page.pixels.resize(page.width * page.height * 4);
+            } catch (const std::bad_alloc&) {
+                 result.hasErrors = true;
+                 result.errorMessage = "Out of memory during downsampling!";
+                 return result;
+            }
 
-                for (int sy = 0; sy < factor; sy++) {
-                    for (int sx = 0; sx < factor; sx++) {
-                        int srcX = x * factor + sx;
-                        int srcY = y * factor + sy;
-                        int baseSrc = (srcY * highRes.width + srcX) * 4;
-                        
-                        uint8_t a = highRes.pixels[baseSrc + 3];
-                        sumR += highRes.pixels[baseSrc + 0] * a;
-                        sumG += highRes.pixels[baseSrc + 1] * a;
-                        sumB += highRes.pixels[baseSrc + 2] * a;
-                        totalAlpha += a;
-                        sumA += a;
+            for(int y=0; y<page.height; y++) {
+                for(int x=0; x<page.width; x++) {
+                    int baseDest = (y*page.width + x)*4;
+                    
+                    int sumR = 0, sumG = 0, sumB = 0, sumA = 0;
+                    int totalAlpha = 0;
+
+                    for (int sy = 0; sy < factor; sy++) {
+                        for (int sx = 0; sx < factor; sx++) {
+                            int srcX = x * factor + sx;
+                            int srcY = y * factor + sy;
+                            int baseSrc = (srcY * highPage.width + srcX) * 4;
+                            
+                            uint8_t a = highPage.pixels[baseSrc + 3];
+                            sumR += highPage.pixels[baseSrc + 0] * a;
+                            sumG += highPage.pixels[baseSrc + 1] * a;
+                            sumB += highPage.pixels[baseSrc + 2] * a;
+                            totalAlpha += a;
+                            sumA += a;
+                        }
+                    }
+                    
+                    if (totalAlpha == 0) {
+                        page.pixels[baseDest + 0] = 0;
+                        page.pixels[baseDest + 1] = 0;
+                        page.pixels[baseDest + 2] = 0;
+                        page.pixels[baseDest + 3] = 0;
+                    } else {
+                        page.pixels[baseDest + 0] = (uint8_t)(sumR / totalAlpha);
+                        page.pixels[baseDest + 1] = (uint8_t)(sumG / totalAlpha);
+                        page.pixels[baseDest + 2] = (uint8_t)(sumB / totalAlpha);
+                        page.pixels[baseDest + 3] = (uint8_t)(sumA / (factor * factor));
                     }
                 }
-                
-                if (totalAlpha == 0) {
-                    result.pixels[baseDest + 0] = 0;
-                    result.pixels[baseDest + 1] = 0;
-                    result.pixels[baseDest + 2] = 0;
-                    result.pixels[baseDest + 3] = 0;
-                } else {
-                    result.pixels[baseDest + 0] = (uint8_t)(sumR / totalAlpha);
-                    result.pixels[baseDest + 1] = (uint8_t)(sumG / totalAlpha);
-                    result.pixels[baseDest + 2] = (uint8_t)(sumB / totalAlpha);
-                    result.pixels[baseDest + 3] = (uint8_t)(sumA / (factor * factor));
-                }
             }
+            result.pages.push_back(page);
         }
         
         // Downsample Glyphs
@@ -105,6 +118,17 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
             ng.xoffset /= factor; ng.yoffset /= factor; ng.advance /= factor;
             result.glyphs.push_back(ng);
         }
+        
+        // Set info for export (using first page dims or scaled setting)
+        // Set info for export (using first page dims or scaled setting)
+        if (!result.pages.empty()) {
+            if (settings.atlasWidth > 0) result.atlasWidth = settings.atlasWidth;
+            else result.atlasWidth = result.pages[0].width;
+
+            if (settings.atlasHeight > 0) result.atlasHeight = settings.atlasHeight;
+            else result.atlasHeight = result.pages[0].height;
+        }
+
         return result;
     }
 
@@ -117,22 +141,23 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
 
     struct RenderedChar {
         uint32_t code;
-        GlyphBitmap body;
-        GlyphBitmap outline;
+        GlyphBitmap body; // Will hold metrics ONLY (buffer empty)
+        GlyphBitmap outline; // Will hold metrics ONLY (buffer empty)
         int packingWidth, packingHeight;
         int penOffsetX, penOffsetY;
         int atlasX = 0, atlasY = 0;
+        int pageIndex = 0;
         bool skip = false;
     };
     
     std::vector<RenderedChar> chars;
-    size_t limit = 4096; 
+    size_t limit = 65536; 
     if (charset.size() > limit) {
         result.hasErrors = true;
         result.errorMessage = "Too many characters selected! Limiting to " + std::to_string(limit) + ".";
     }
 
-    // 2. Measure & Render
+    // 2. Measure (Phase 1: Metrics Only)
     for (uint32_t code : charset) {
         if (chars.size() >= limit) break;
         if (!fontManager.HasGlyph(code)) continue;
@@ -142,18 +167,21 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
         
         // Determine flags based on hinting mode
         FT_Int32 flags = FT_LOAD_RENDER;
-        if (settings.hintingMode == 0) flags |= (FT_LOAD_NO_HINTING | FT_LOAD_NO_AUTOHINT); // Smooth
-        else if (settings.hintingMode == 1) flags |= FT_LOAD_FORCE_AUTOHINT;                // Sharp
-        else flags |= FT_LOAD_TARGET_NORMAL;                                                // Crisp/Default
+        if (settings.hintingMode == 0) flags |= (FT_LOAD_NO_HINTING | FT_LOAD_NO_AUTOHINT); 
+        else if (settings.hintingMode == 1) flags |= FT_LOAD_FORCE_AUTOHINT;
+        else flags |= FT_LOAD_TARGET_NORMAL;
 
-        rc.body = fontManager.RenderGlyph(code, flags);
+        // Get METRICS only (Deferred Rendering)
+        if (!fontManager.GetGlyphBounds(code, rc.body, flags)) continue;
         
         if (rc.body.width == 0 && rc.body.height == 0 && rc.body.advance == 0 && code != 32 && code != 160) continue;
 
         if (settings.enableStroke && settings.strokeWidth > 0) {
             float effWidth = settings.strokeWidth;
-            if (settings.strokePosition == 1) effWidth *= 0.5f; // Center: Half width (drawn on top/bottom effective)
-            rc.outline = fontManager.RenderGlyphStroke(code, effWidth, flags);
+            if (settings.strokePosition == 1) effWidth *= 0.5f; // Center
+            if (!fontManager.GetGlyphStrokeBounds(code, effWidth, rc.outline, flags)) {
+                rc.outline = rc.body; // Fallback
+            }
         } else {
             rc.outline = rc.body; 
         }
@@ -188,174 +216,241 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
     }
     
     std::sort(chars.begin(), chars.end(), [](const RenderedChar& a, const RenderedChar& b) {
-        return a.code < b.code;
+        // Sort by height descending for better packing
+        return a.packingHeight > b.packingHeight;
     });
 
-    // 4. Pack
-    int atlasWidth = settings.atlasWidth;
-    int atlasHeight = settings.atlasHeight;
+    // 4. Pack Multi-Page
+    int maxPageDim = 4096; // Default safe max
+    if (settings.atlasWidth > 0) maxPageDim = settings.atlasWidth;
+    
+    // We will maintain a list of pages. Each page has current dims and packing cursor.
+    struct PageState {
+        int id;
+        int width;  // Current width
+        int height; // Current height
+        int currentX;
+        int currentY;
+        int rowHeight;
+    };
 
-    // Handle Auto-size (0 means Auto)
-    if (atlasWidth <= 0 || atlasHeight <= 0) {
-        if (atlasWidth <= 0 && atlasHeight <= 0) {
-            // Both auto: Find smallest square POT
-            int currentS = 128;
-            bool fits = false;
-            while (!fits && currentS <= 4096) {
-                int vX = settings.padding;
-                int vY = settings.padding;
-                int vRowH = 0;
-                fits = true;
-                for (const auto& rc : chars) {
-                    if (vX + rc.packingWidth + settings.padding > currentS) {
-                        vX = settings.padding;
-                        vY += vRowH + settings.padding;
-                        vRowH = 0;
-                        if (vY + rc.packingHeight + settings.padding > currentS) {
-                            fits = false;
-                            break;
-                        }
-                    }
-                    if (rc.packingHeight > vRowH) vRowH = rc.packingHeight;
-                    vX += rc.packingWidth + settings.padding;
-                    if (vX > currentS || vY + vRowH + settings.padding > currentS) {
-                        fits = false;
+    std::vector<PageState> pageStates;
+    
+    // Initial Page
+    int initialW = (settings.atlasWidth > 0) ? settings.atlasWidth : 128;
+    int initialH = (settings.atlasHeight > 0) ? settings.atlasHeight : 128;
+    
+    // If auto, start small
+    if (settings.atlasWidth <= 0) initialW = 128;
+    if (settings.atlasHeight <= 0) initialH = 128;
+
+    pageStates.push_back({0, initialW, initialH, settings.padding, settings.padding, 0});
+
+    // Re-sort back to ID for consistent output? BMFont usually packs loosely or tightly.
+    // For good packing we should sort by height, pack, then we can re-sort glyphs by ID later if needed.
+    // We already sorted by Height above.
+
+    for (auto& rc : chars) {
+        bool fitted = false;
+        
+        // Try to fit in existing pages
+        for (auto& page : pageStates) {
+            // Check if fits in current row
+            if (page.currentX + rc.packingWidth + settings.padding <= page.width) {
+                 if (page.currentY + rc.packingHeight + settings.padding <= page.height) {
+                     // Fits!
+                     rc.atlasX = page.currentX;
+                     rc.atlasY = page.currentY;
+                     rc.pageIndex = page.id;
+                     
+                     page.currentX += rc.packingWidth + settings.padding;
+                     if (rc.packingHeight > page.rowHeight) page.rowHeight = rc.packingHeight;
+                     fitted = true;
+                     break;
+                 }
+            } else {
+                // Move to new row
+                if (page.currentY + page.rowHeight + settings.padding + rc.packingHeight + settings.padding <= page.height) {
+                    // Fits in new row?
+                    page.currentX = settings.padding;
+                    page.currentY += page.rowHeight + settings.padding;
+                    page.rowHeight = 0;
+                    
+                    if (page.currentX + rc.packingWidth + settings.padding <= page.width) {
+                        rc.atlasX = page.currentX;
+                        rc.atlasY = page.currentY;
+                        rc.pageIndex = page.id;
+                        
+                        page.currentX += rc.packingWidth + settings.padding;
+                        if (rc.packingHeight > page.rowHeight) page.rowHeight = rc.packingHeight;
+                        fitted = true;
                         break;
                     }
                 }
-                if (!fits) currentS *= 2;
             }
-            atlasWidth = currentS;
-            
-            // Now minimize height for this width
-            int vX = settings.padding;
-            int vY = settings.padding;
-            int vRowH = 0;
-            for (const auto& rc : chars) {
-                if (vX + rc.packingWidth + settings.padding > atlasWidth) {
-                    vX = settings.padding;
-                    vY += vRowH + settings.padding;
-                    vRowH = 0;
-                }
-                if (rc.packingHeight > vRowH) vRowH = rc.packingHeight;
-                vX += rc.packingWidth + settings.padding;
-            }
-            int neededH = vY + vRowH + settings.padding;
-            atlasHeight = 128;
-            while (atlasHeight < neededH && atlasHeight < 4096) atlasHeight *= 2;
-            
-            // Safety: ensure it doesn't exceed 4096 and is at least POT of 128
-            if (atlasHeight > 4096) atlasHeight = 4096;
-        } else if (atlasHeight <= 0) {
-            // Only Height is auto: Find smallest POT height for fixed width
-            int vX = settings.padding;
-            int vY = settings.padding;
-            int vRowH = 0;
-            for (const auto& rc : chars) {
-                if (vX + rc.packingWidth + settings.padding > atlasWidth) {
-                    vX = settings.padding;
-                    vY += vRowH + settings.padding;
-                    vRowH = 0;
-                }
-                if (rc.packingHeight > vRowH) vRowH = rc.packingHeight;
-                vX += rc.packingWidth + settings.padding;
-            }
-            int neededH = vY + vRowH + settings.padding;
-            atlasHeight = 128;
-            while (atlasHeight < neededH && atlasHeight < 4096) atlasHeight *= 2;
-        } else if (atlasWidth <= 0) {
-            // Only Width is auto: Find smallest POT width for fixed height
-            int currentW = 128;
-            bool fits = false;
-            while (!fits && currentW <= 4096) {
-                int vX = settings.padding;
-                int vY = settings.padding;
-                int vRowH = 0;
-                fits = true;
-                for (const auto& rc : chars) {
-                    if (vX + rc.packingWidth + settings.padding > currentW) {
-                        vX = settings.padding;
-                        vY += vRowH + settings.padding;
-                        vRowH = 0;
-                    }
-                    if (vY + rc.packingHeight + settings.padding > atlasHeight) {
-                        fits = false;
-                        break;
-                    }
-                    if (rc.packingHeight > vRowH) vRowH = rc.packingHeight;
-                    vX += rc.packingWidth + settings.padding;
-                }
-                if (!fits) currentW *= 2;
-            }
-            atlasWidth = currentW;
         }
-    }
-    
-    // Virtual Packing: We might need a larger buffer to show out-of-bounds glyphs
-    // But we limit it to prevent crashes.
-    int packedWidth = atlasWidth;
-    int packedHeight = atlasHeight;
-    
-    // First pass: Calculate required height for ALL glyphs (up to a limit)
-    int vX = settings.padding;
-    int vY = settings.padding;
-    int vRowH = 0;
-    int maxVHeight = 8192; // Safety limit
-    
-    for (const auto& rc : chars) {
-        if (vX + rc.packingWidth + settings.padding > atlasWidth) {
-            vX = settings.padding;
-            vY += vRowH + settings.padding;
-            vRowH = 0;
-        }
-        if (vY + rc.packingHeight + settings.padding > maxVHeight) break;
-        if (rc.packingHeight > vRowH) vRowH = rc.packingHeight;
-        vX += rc.packingWidth + settings.padding;
-    }
-    packedHeight = std::max(atlasHeight, vY + vRowH + settings.padding);
-    if (packedHeight > maxVHeight) packedHeight = maxVHeight;
+        
+        if (!fitted) {
+            // Can we grow the last page?
+            auto& lastPage = pageStates.back();
+            // If MultiPage is DISABLED, we MUST allow growing beyond limits to "overflow"
+            bool forceGrow = !settings.allowMultiPage;
+            
+            bool canGrowW = (settings.atlasWidth <= 0 && lastPage.width < maxPageDim) || forceGrow;
+            bool canGrowH = (settings.atlasHeight <= 0 && lastPage.height < maxPageDim) || forceGrow;
+            
+            if (canGrowW || canGrowH) {
+                // Resize logic (simple POT doubling)
+                int newW = lastPage.width;
+                int newH = lastPage.height;
+                bool grew = false;
 
-    result.width = packedWidth;
-    result.height = packedHeight;
-    result.atlasWidth = atlasWidth;
-    result.atlasHeight = atlasHeight;
-    
+                // Simple heuristic: Try doubling width, then height until it fits or hits limit
+                // If forceGrow is true, we ignore maxPageDim limit
+                while (!grew) {
+                    // Safety break
+                    if (newW > 32768 || newH > 32768) break; 
+
+                    if (!forceGrow) {
+                        if (newW >= maxPageDim && newH >= maxPageDim) break;
+                    }
+
+                    if (newW <= newH) {
+                        if (canGrowW) newW *= 2;
+                        else if (canGrowH) newH *= 2;
+                        else break;
+                    } else {
+                        if (canGrowH) newH *= 2;
+                        else if (canGrowW) newW *= 2;
+                        else break;
+                    }
+                    
+                    // Verify if this new size ACTUALLY fits the char
+                    // We don't reset packing, we just expand bounds.
+                    // But wait, if we expand W, the current row might continue?
+                    // Basically simpler: Expand page to NewW/NewH.
+                    // Then try to fit again.
+                    if (lastPage.currentX + rc.packingWidth + settings.padding <= newW && 
+                        lastPage.currentY + rc.packingHeight + settings.padding <= newH) {
+                        grew = true;
+                    } 
+                    // Or check new row
+                    else if (lastPage.currentY + lastPage.rowHeight + settings.padding + rc.packingHeight + settings.padding <= newH) {
+                        grew = true;
+                    }
+                }
+                
+                if (grew) {
+                    lastPage.width = newW;
+                    lastPage.height = newH;
+                    // Retry fitting in this page (recursive or goto?)
+                    // Just repeat the logic inline cause lazy.
+                    
+                    // Try Current Row
+                     if (lastPage.currentX + rc.packingWidth + settings.padding <= lastPage.width &&
+                         lastPage.currentY + rc.packingHeight + settings.padding <= lastPage.height) {
+                         rc.atlasX = lastPage.currentX;
+                         rc.atlasY = lastPage.currentY;
+                         rc.pageIndex = lastPage.id;
+                         lastPage.currentX += rc.packingWidth + settings.padding;
+                         if (rc.packingHeight > lastPage.rowHeight) lastPage.rowHeight = rc.packingHeight;
+                         fitted = true;
+                     } 
+                     // Try New Row
+                     else {
+                         lastPage.currentX = settings.padding;
+                         lastPage.currentY += lastPage.rowHeight + settings.padding;
+                         lastPage.rowHeight = 0;
+                         if (lastPage.currentX + rc.packingWidth + settings.padding <= lastPage.width && 
+                             lastPage.currentY + rc.packingHeight + settings.padding <= lastPage.height) {
+                            rc.atlasX = lastPage.currentX;
+                            rc.atlasY = lastPage.currentY;
+                            rc.pageIndex = lastPage.id;
+                            lastPage.currentX += rc.packingWidth + settings.padding;
+                            if (rc.packingHeight > lastPage.rowHeight) lastPage.rowHeight = rc.packingHeight;
+                            fitted = true;
+                         }
+                     }
+                }
+            }
+        }
+        
+        if (!fitted) {
+            // Must create new page
+            if (!settings.allowMultiPage) {
+                // Should not happen if forceGrow worked, unless char > 32k or memory fail
+                rc.pageIndex = -1; 
+                result.skippedGlyphs++;
+                continue; 
+            }
+
+            int nextId = (int)pageStates.size();
+            int pW = (settings.atlasWidth > 0) ? settings.atlasWidth : 128; // Start small or fixed
+            int pH = (settings.atlasHeight > 0) ? settings.atlasHeight : 128;
+            
+            // Check if char fits in min page? If char is huge (e.g. > 128), start page larger
+            while (pW < rc.packingWidth + settings.padding*2 && pW < maxPageDim) pW *= 2;
+            while (pH < rc.packingHeight + settings.padding*2 && pH < maxPageDim) pH *= 2;
+
+            PageState newPage = {nextId, pW, pH, settings.padding, settings.padding, 0};
+            
+            // It MUST fit here (unless char > maxPageDim, then error or clamp)
+            if (newPage.currentX + rc.packingWidth + settings.padding > newPage.width) {
+                 // Error: Character too large for Max Page Size
+                 rc.skip = true;
+                 result.skippedGlyphs++;
+                 continue; // Skip
+            }
+            
+            rc.atlasX = newPage.currentX;
+            rc.atlasY = newPage.currentY;
+            rc.pageIndex = newPage.id;
+            
+            newPage.currentX += rc.packingWidth + settings.padding;
+            if (rc.packingHeight > newPage.rowHeight) newPage.rowHeight = rc.packingHeight;
+            
+            pageStates.push_back(newPage);
+        }
+    }
+
+    // Initialize Result Pages
+    for (const auto& ps : pageStates) {
+        AtlasPage ap;
+        ap.id = ps.id;
+        ap.width = ps.width;
+        ap.height = ps.height;
+        // Trim height?
+        // If Auto Height was enabled, we might want to trim the page to used height?
+        // Let's trim to nearest POT or just used height if allowed. BMFont usually outputs POT.
+        // ps.height is already POT.
+        
+        try {
+            ap.pixels.assign(ap.width * ap.height * 4, 0); // Clear to 0
+        } catch (const std::bad_alloc&) {
+            result.hasErrors = true;
+            result.errorMessage = "Memory allocation failed for Page " + std::to_string(ap.id);
+            return result;
+        }
+        result.pages.push_back(ap);
+    }
+
     // Fill Metrics
     result.fontSize = settings.fontSize;
     result.lineHeight = fontManager.GetLineHeight();
     result.base = fontManager.GetAscender();
+    result.base = fontManager.GetAscender();
+    
+    // Set Logical Atlas Width/Height
+    // If settings had a fixed size, use that. Otherwise use the generated page size.
+    if (settings.atlasWidth > 0) result.atlasWidth = settings.atlasWidth;
+    else result.atlasWidth = result.pages.empty() ? 0 : result.pages[0].width;
+    
+    if (settings.atlasHeight > 0) result.atlasHeight = settings.atlasHeight;
+    else result.atlasHeight = result.pages.empty() ? 0 : result.pages[0].height;
 
-    try {
-        result.pixels.assign(result.width * result.height * 4, 0);
-    } catch (const std::bad_alloc&) {
-        result.hasErrors = true;
-        result.errorMessage = "Memory allocation failed! Reduce font size or atlas size.";
-        result.width = 0; result.height = 0;
-        return result;
-    }
-
-    // 5. Build Final Result List and Calculate Positions
-    int currentX = settings.padding;
-    int currentY = settings.padding;
-    int currentRowHeight = 0;
-    int skippedCount = 0;
-
-    for (auto& rc : chars) {
-        if (currentX + rc.packingWidth + settings.padding > atlasWidth) {
-            currentX = settings.padding;
-            currentY += currentRowHeight + settings.padding;
-            currentRowHeight = 0;
-        }
-        
-        if (currentY + rc.packingHeight + settings.padding > result.height) {
-            rc.skip = true;
-            skippedCount++;
-            continue; 
-        }
-
-        rc.atlasX = currentX;
-        rc.atlasY = currentY;
-        
+    // Add Glyphs to Result
+    for (const auto& rc : chars) {
+        if (rc.skip) continue;
         GlyphPlacement gp;
         gp.charCode = rc.code;
         gp.x = rc.atlasX;
@@ -365,10 +460,8 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
         gp.xoffset = -rc.penOffsetX + settings.globalXOffset; 
         gp.yoffset = (fontManager.GetAscender() - rc.penOffsetY) + settings.globalYOffset;
         gp.advance = rc.body.advance + settings.globalXAdvance;
+        gp.pageIndex = rc.pageIndex;
         result.glyphs.push_back(gp);
-        
-        currentX += rc.packingWidth + settings.padding;
-        if (rc.packingHeight > currentRowHeight) currentRowHeight = rc.packingHeight;
     }
 
     // 6. Parallel Composition
@@ -386,93 +479,122 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
 
         futures.push_back(std::async(std::launch::async, [&, startIdx, endIdx]() {
             for (int i = startIdx; i < endIdx; i++) {
-                const auto& rc = chars[i];
-                if (rc.skip) continue;
+                const auto& rcCoords = chars[i]; // Coords and skip info only
+                if (rcCoords.skip) continue;
+                
+                // Get Page Buffer
+                // WARNING: Vector might realloc if we push back?
+                // result.pages is sized and fixed now.
+                // Thread safety: Each glyph writes to distinct region.
+                // Overlap: Padding prevents overlap. Shadow/Stroke?
+                // Padding includes room for packingWidth/Height which includes effects.
+                // So safe.
+                
+                // Need pointer to page pixels
+                // Vector access is thread safe for reading, and writing DIFFERENT elements.
+                // We need to be careful not to resize 'result.pages' (we are not).
+                // However, we can't easily access 'result.pages[rcCoords.pageIndex]' efficiently if we don't capture 'result'.
+                // 'result' is captured by reference [&].
+                
+                // We need to look up the correct page.
+                // But wait, iterating inside the lambda we need checks.
+                // It's safe.
+                
+                AtlasPage& targetPage = result.pages[rcCoords.pageIndex];
 
-                int penX = rc.atlasX + rc.penOffsetX; 
-                int penY = rc.atlasY + rc.penOffsetY;
+                // ----- DEFERRED RENDERING START -----
+                FT_Int32 flags = FT_LOAD_RENDER;
+                if (settings.hintingMode == 0) flags |= (FT_LOAD_NO_HINTING | FT_LOAD_NO_AUTOHINT); 
+                else if (settings.hintingMode == 1) flags |= FT_LOAD_FORCE_AUTOHINT;
+                else flags |= FT_LOAD_TARGET_NORMAL;
+
+                GlyphBitmap body = fontManager.RenderGlyph(rcCoords.code, flags);
+                GlyphBitmap outline;
+                if (settings.enableStroke && settings.strokeWidth > 0) {
+                     float effWidth = settings.strokeWidth;
+                     if (settings.strokePosition == 1) effWidth *= 0.5f; 
+                     outline = fontManager.RenderGlyphStroke(rcCoords.code, effWidth, flags);
+                } else {
+                     outline = body; 
+                }
+                // ----- DEFERRED RENDERING END -----
+
+                int penX = rcCoords.atlasX + rcCoords.penOffsetX; 
+                int penY = rcCoords.atlasY + rcCoords.penOffsetY;
                 
                 // A. Shadow
                 if (settings.enableShadow) {
                      int blur = settings.shadowBlur;
-                     int drawRefX = penX + rc.outline.bearingX + settings.shadowOffsetX;
-                     int drawRefY = penY - rc.outline.bearingY + settings.shadowOffsetY;
+                     int drawRefX = penX + outline.bearingX + settings.shadowOffsetX;
+                     int drawRefY = penY - outline.bearingY + settings.shadowOffsetY;
 
                      if (blur > 0) {
-                         int sw = rc.outline.width + blur*2;
-                         int sh = rc.outline.height + blur*2;
+                         int sw = outline.width + blur*2;
+                         int sh = outline.height + blur*2;
                          if (sw > 0 && sh > 0) {
                             std::vector<uint8_t> shadowBuf(sw * sh, 0);
-                            for(int y=0; y<rc.outline.height; y++) {
-                                int srcOffset = y * rc.outline.width;
+                            for(int y=0; y<outline.height; y++) {
+                                int srcOffset = y * outline.width;
                                 int dstOffset = (y+blur)*sw + blur;
-                                if(srcOffset < (int)rc.outline.buffer.size() && dstOffset + rc.outline.width <= (int)shadowBuf.size())
-                                    memcpy(shadowBuf.data() + dstOffset, rc.outline.buffer.data() + srcOffset, rc.outline.width);
+                                if(srcOffset < (int)outline.buffer.size() && dstOffset + outline.width <= (int)shadowBuf.size())
+                                    memcpy(shadowBuf.data() + dstOffset, outline.buffer.data() + srcOffset, outline.width);
                             }
                             std::vector<uint8_t> blurred = BitmapUtils::ApplyGaussianBlur(shadowBuf, sw, sh, (float)blur);
                             GlyphBitmap shRes; shRes.buffer = blurred; shRes.width = sw; shRes.height = sh;
                             
-                            BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
+                            BitmapUtils::BlitGlyph(targetPage.pixels, targetPage.width, targetPage.height, 
                                                    drawRefX - blur, drawRefY - blur, shRes, 
                                                    settings.shadowColor, nullptr);
                          }
                      } else {
-                         BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
-                                                drawRefX, drawRefY, rc.outline, 
+                         BitmapUtils::BlitGlyph(targetPage.pixels, targetPage.width, targetPage.height, 
+                                                drawRefX, drawRefY, outline, 
                                                 settings.shadowColor, nullptr);
                      }
                 }
 
-                // composition lambda definitions
                 auto DrawStroke = [&]() {
                     if (settings.enableStroke && settings.strokeWidth > 0) {
                          bool mask = (settings.strokePosition == 2); // Inside
-                         BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
-                                               penX + rc.outline.bearingX, penY - rc.outline.bearingY, rc.outline, 
+                         BitmapUtils::BlitGlyph(targetPage.pixels, targetPage.width, targetPage.height, 
+                                               penX + outline.bearingX, penY - outline.bearingY, outline, 
                                                settings.strokeColor, &settings.strokeGradient, mask);
                     }
                 };
 
                 auto DrawBody = [&]() {
-                    int bodyX = penX + rc.body.bearingX;
-                    int bodyY = penY - rc.body.bearingY;
+                    int bodyX = penX + body.bearingX;
+                    int bodyY = penY - body.bearingY;
                     
-                    if (settings.enableInnerGlow && settings.innerGlowSize > 0) {
-                        // OBS: Inner Glow should be drawn *after* fill to be visible on top (if overlaying)
-                        // Or if it clips... 
-                        // Standard: Fill first, then Inner Glow on top.
-                    }
-                    
-                    BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, 
-                                           bodyX, bodyY, rc.body, 
+                    BitmapUtils::BlitGlyph(targetPage.pixels, targetPage.width, targetPage.height, 
+                                           bodyX, bodyY, body, 
                                            settings.fillColor, &settings.fillGradient);
 
                     if (settings.enableInnerGlow && settings.innerGlowSize > 0) {
-                         BitmapUtils::DrawInnerGlow(result.pixels, result.width, result.height, 
-                                                    bodyX, bodyY, rc.body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor,
+                         BitmapUtils::DrawInnerGlow(targetPage.pixels, targetPage.width, targetPage.height, 
+                                                    bodyX, bodyY, body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor,
                                                     settings.innerGlowBlendMode);
                     }
 
                     if (settings.pattern.enabled) {
-                        BitmapUtils::ApplyPatternOverlay(result.pixels, result.width, result.height,
-                                                         bodyX, bodyY, rc.body,
+                        BitmapUtils::ApplyPatternOverlay(targetPage.pixels, targetPage.width, targetPage.height,
+                                                         bodyX, bodyY, body,
                                                          settings.pattern);
                     }
                 };
 
-                if (settings.strokePosition == 0) { // Outside
+                if (settings.strokePosition == 0) {
                     DrawStroke();
                     DrawBody();
-                } else { // Center or Inside
+                } else {
                     DrawBody();
                     DrawStroke();
                 }
 
-                // B. Bevel
                 if (settings.enableBevel && settings.bevelDistance > 0) {
-                    BitmapUtils::DrawBevel(result.pixels, result.width, result.height,
-                                           penX + rc.body.bearingX, penY - rc.body.bearingY,
-                                           rc.body,
+                    BitmapUtils::DrawBevel(targetPage.pixels, targetPage.width, targetPage.height,
+                                           penX + body.bearingX, penY - body.bearingY,
+                                           body,
                                            settings.bevelDistance, (float)settings.bevelAngle, 
                                            settings.bevelSpread, settings.bevelStrength, settings.bevelType,
                                            settings.bevelHighlightColor, settings.bevelShadowColor);
@@ -482,29 +604,28 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
     }
     for (auto& f : futures) f.wait();
     
-    // Apply Red Tint to out-of-bounds areas
-    if (result.height > atlasHeight) {
-        uint8_t redTint[4] = {255, 0, 0, 60}; // Semi-transparent red
-        BitmapUtils::FillRect(result.pixels, result.width, result.height, 0, atlasHeight, result.width, result.height - atlasHeight, redTint);
-    }
-    
-    if (skippedCount > 0) {
+    // Check skipped
+    if (result.skippedGlyphs > 0) {
         result.hasErrors = true;
-        result.skippedGlyphs = skippedCount;
-        result.errorMessage = "Some glyphs were skipped (buffer limit reached).";
+        result.errorMessage = "Some glyphs were skipped.";
     }
     
+    result.fontName = fontManager.GetFontName();
     return result;
 }
 
 // Legacy Preview
 AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, const std::string& text, const AtlasSettings& settings) {
+    // Basic single-page implementation for preview
+    // We will just assume it fits in one page for preview purposes.
+    // If it doesn't, we should probably scale it or error.
     
-    // 1. Super Sampling
+    // Super Sampling Check
     int factor = settings.superSamplingFactor;
     if (factor <= 0) factor = 1;
 
     if (factor > 1) {
+        // ... (Similar recursion)
         AtlasSettings highSettings = settings;
         highSettings.superSamplingFactor = 1; 
         
@@ -524,52 +645,57 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
         if (highRes.hasErrors) return highRes;
         
         AtlasResult result;
-        result.width = highRes.width / factor;
-        result.height = highRes.height / factor;
         result.hasErrors = highRes.hasErrors;
         result.errorMessage = highRes.errorMessage;
         
-        // Downsample Metrics
         result.fontSize = highRes.fontSize / factor;
         result.lineHeight = highRes.lineHeight / factor;
+        result.lineHeight = highRes.lineHeight / factor;
         result.base = highRes.base / factor;
+        result.fontName = highRes.fontName;
 
-        // Downsample Pixels (Box Filter with Alpha Weighting to prevent dark edges)
-        result.pixels.resize(result.width * result.height * 4);
-        for(int y=0; y<result.height; y++) {
-            for(int x=0; x<result.width; x++) {
-                int baseDest = (y*result.width + x)*4;
-                
-                int sumR = 0, sumG = 0, sumB = 0, sumA = 0;
-                int totalAlpha = 0;
+        // Downsample Page 0
+        if (!highRes.pages.empty()) {
+            AtlasPage page;
+            page.id = 0;
+            const auto& highPage = highRes.pages[0];
+            
+            page.width = highPage.width / factor;
+            page.height = highPage.height / factor;
+            result.atlasWidth = page.width;
+            result.atlasHeight = page.height;
 
-                for (int sy = 0; sy < factor; sy++) {
-                    for (int sx = 0; sx < factor; sx++) {
-                        int srcX = x * factor + sx;
-                        int srcY = y * factor + sy;
-                        int baseSrc = (srcY * highRes.width + srcX) * 4;
-                        
-                        uint8_t a = highRes.pixels[baseSrc + 3];
-                        sumR += highRes.pixels[baseSrc + 0] * a;
-                        sumG += highRes.pixels[baseSrc + 1] * a;
-                        sumB += highRes.pixels[baseSrc + 2] * a;
-                        totalAlpha += a;
-                        sumA += a;
+            page.pixels.resize(page.width * page.height * 4);
+            
+            for(int y=0; y<page.height; y++) {
+                for(int x=0; x<page.width; x++) {
+                    int baseDest = (y*page.width + x)*4;
+                    int sumR = 0, sumG = 0, sumB = 0, sumA = 0;
+                    int totalAlpha = 0;
+                    for (int sy = 0; sy < factor; sy++) {
+                        for (int sx = 0; sx < factor; sx++) {
+                            int srcX = x * factor + sx;
+                            int srcY = y * factor + sy;
+                            int baseSrc = (srcY * highPage.width + srcX) * 4;
+                            uint8_t a = highPage.pixels[baseSrc + 3];
+                            sumR += highPage.pixels[baseSrc + 0] * a;
+                            sumG += highPage.pixels[baseSrc + 1] * a;
+                            sumB += highPage.pixels[baseSrc + 2] * a;
+                            totalAlpha += a;
+                            sumA += a;
+                        }
+                    }
+                    if (totalAlpha == 0) {
+                        page.pixels[baseDest+0]=0; page.pixels[baseDest+1]=0; page.pixels[baseDest+2]=0; page.pixels[baseDest+3]=0;
+                    } else {
+                        page.pixels[baseDest+0] = (uint8_t)(sumR/totalAlpha);
+                        page.pixels[baseDest+1] = (uint8_t)(sumG/totalAlpha);
+                        page.pixels[baseDest+2] = (uint8_t)(sumB/totalAlpha);
+                        page.pixels[baseDest+3] = (uint8_t)(sumA/(factor*factor));
                     }
                 }
-                
-                if (totalAlpha == 0) {
-                    result.pixels[baseDest + 0] = 0;
-                    result.pixels[baseDest + 1] = 0;
-                    result.pixels[baseDest + 2] = 0;
-                    result.pixels[baseDest + 3] = 0;
-                } else {
-                    result.pixels[baseDest + 0] = (uint8_t)(sumR / totalAlpha);
-                    result.pixels[baseDest + 1] = (uint8_t)(sumG / totalAlpha);
-                    result.pixels[baseDest + 2] = (uint8_t)(sumB / totalAlpha);
-                    result.pixels[baseDest + 3] = (uint8_t)(sumA / (factor * factor));
-                }
             }
+            result.pages.push_back(page);
         }
         return result;
     }
@@ -578,11 +704,10 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
     if (!fontManager.IsLoaded()) return result;
     fontManager.SetSize(settings.fontSize);
 
-    // Reuse RenderedChar struct locally or make common? Local is fine.
     struct RenderedChar {
         uint32_t code;
         GlyphBitmap body;
-        GlyphBitmap outline; // Added for Real Stroke
+        GlyphBitmap outline; 
         int width, height; 
         int bearingY, bearingX;
         long advance;
@@ -592,34 +717,29 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
     };
     std::vector<RenderedChar> chars;
     
-    // Bounds Measure (Legacy)
-    // ... Implement using same logic as Step 1076 ...
+    // Bounds Measure
     int minX = 100000, minY = 100000, maxX = -100000, maxY = -100000;
     int currentPenX = 0; 
-    int strokeOff = settings.enableStroke ? (int)settings.strokeWidth : 0;
     
     for (char c : text) {
         RenderedChar rc;
         rc.code = (uint32_t)c;
         
-        // Determine flags based on hinting mode
         FT_Int32 flags = FT_LOAD_RENDER;
-        if (settings.hintingMode == 0) flags |= (FT_LOAD_NO_HINTING | FT_LOAD_NO_AUTOHINT); // Smooth
-        else if (settings.hintingMode == 1) flags |= FT_LOAD_FORCE_AUTOHINT;                // Sharp
-        else flags |= FT_LOAD_TARGET_NORMAL;                                                // Crisp/Default
+        if (settings.hintingMode == 0) flags |= (FT_LOAD_NO_HINTING | FT_LOAD_NO_AUTOHINT); 
+        else if (settings.hintingMode == 1) flags |= FT_LOAD_FORCE_AUTOHINT;
+        else flags |= FT_LOAD_TARGET_NORMAL; 
         
         rc.body = fontManager.RenderGlyph(rc.code, flags);
         
         if (settings.enableStroke && settings.strokeWidth > 0) {
             rc.outline = fontManager.RenderGlyphStroke(rc.code, settings.strokeWidth, flags);
-            // Use outline metrics
             rc.width = rc.outline.width;
             rc.height = rc.outline.height;
-            rc.bearingY = rc.outline.bearingY; // Top
-            rc.bearingX = rc.outline.bearingX; // Left
+            rc.bearingY = rc.outline.bearingY; 
+            rc.bearingX = rc.outline.bearingX; 
         } else {
             rc.outline = rc.body;
-            int sExt = 0; // No manual expansion needed if using Outline or Body directly
             rc.width = rc.body.width;
             rc.height = rc.body.height;
             rc.bearingY = rc.body.bearingY; 
@@ -627,33 +747,26 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
         }
         rc.advance = rc.body.advance;
         
-        // 1. Reference Position (No Offset)
         int refLeft = currentPenX + rc.bearingX;
         int refTop = -rc.bearingY;
         int refRight = refLeft + rc.width;
         int refBottom = refTop + rc.height;
-
-        // 2. Shifted Position (With Offset)
         int sLeft = refLeft + settings.globalXOffset;
         int sTop = refTop + settings.globalYOffset;
         int sRight = sLeft + rc.width; 
         int sBottom = sTop + rc.height;
 
-        // Shadow Bounds (applied to Shifted)
         if (settings.enableShadow) {
             int shLeft = sLeft + settings.shadowOffsetX;
             int shTop = sTop + settings.shadowOffsetY;
             int shRight = shLeft + rc.width; 
             int shBottom = shTop + rc.height;
-            // Add shadow to bounds
             if (shLeft < minX) minX = shLeft;
             if (shTop < minY) minY = shTop;
             if (shRight > maxX) maxX = shRight;
             if (shBottom > maxY) maxY = shBottom;
         }
 
-        // Union Bounds: Include BOTH Reference and Shifted
-        // This anchors the view so offsets create visible movement
         int bMinX = std::min(refLeft, sLeft);
         int bMinY = std::min(refTop, sTop);
         int bMaxX = std::max(refRight, sRight);
@@ -675,14 +788,19 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
     int totalWidth = (maxX - minX) + (settings.padding * 2);
     int totalHeight = (maxY - minY) + (settings.padding * 2);
     
-    result.width = totalWidth;
-    result.height = totalHeight;
+    // Single Page Result
+    AtlasPage page;
+    page.id = 0;
+    page.width = totalWidth;
+    page.height = totalHeight;
+    result.atlasWidth = totalWidth;
+    result.atlasHeight = totalHeight;
+
     try {
-        result.pixels.assign(result.width * result.height * 4, 0);
+        page.pixels.assign(page.width * page.height * 4, 0);
     } catch (const std::bad_alloc&) {
         result.hasErrors = true;
         result.errorMessage = "Memory allocation failed for preview! Font size too large.";
-        result.width = 0; result.height = 0;
         return result;
     }
 
@@ -702,14 +820,21 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
 
         currentPenX += rc.advance + settings.globalXAdvance;
     }
-
-    // Parallel Composition for Preview
+    
+    // We already calculated layout, now render.
+    // Sequential is fine for preview, or reuse parallel logic. 
+    // Reuse parallel logic for consistence/speed.
+    
     int pNumGlyphs = (int)chars.size();
     int pNumThreads = std::min((int)std::thread::hardware_concurrency(), (pNumGlyphs / 5) + 1);
     if (pNumThreads < 1) pNumThreads = 1;
-    
     int pChunkSize = (pNumGlyphs + pNumThreads - 1) / pNumThreads;
     std::vector<std::future<void>> pFutures;
+    
+    // We only have one page. Access it directly.
+    unsigned char* rawPixels = page.pixels.data();
+    int pw = page.width;
+    int ph = page.height;
 
     for (int t = 0; t < pNumThreads; t++) {
         int startIdx = t * pChunkSize;
@@ -720,47 +845,46 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
             for (int i = startIdx; i < endIdx; i++) {
                 const auto& rc = chars[i];
                 
-                // Shadow 
                 if (settings.enableShadow) {
                     int shX = rc.outlineX + settings.shadowOffsetX;
                     int shY = rc.outlineY + settings.shadowOffsetY;
                     int blurLayers = settings.shadowBlur > 0 ? settings.shadowBlur : 1;
-                    
                     for (int blur = 0; blur < blurLayers; blur++) {
                         float blurAlpha = settings.shadowColor[3] / (float)(blurLayers);
                         uint8_t shCol[4] = {settings.shadowColor[0], settings.shadowColor[1], settings.shadowColor[2], (uint8_t)blurAlpha};
                         int off = (blur - blurLayers/2);
-                        BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, shX + off, shY + off, rc.outline, shCol, nullptr);
+                        BitmapUtils::BlitGlyph(page.pixels, pw, ph, shX + off, shY + off, rc.outline, shCol, nullptr);
                     }
                 }
                 
-                if (settings.strokePosition == 0) { // Outside
-                    if (settings.enableStroke && settings.strokeWidth > 0) {
-                        BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, rc.outlineX, rc.outlineY, rc.outline, settings.strokeColor, &settings.strokeGradient);
-                    }
-                    BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, rc.bodyX, rc.bodyY, rc.body, settings.fillColor, &settings.fillGradient);
-                    
+                auto DrawStroke = [&]() {
+                     if (settings.enableStroke && settings.strokeWidth > 0) {
+                         BitmapUtils::BlitGlyph(page.pixels, pw, ph, rc.outlineX, rc.outlineY, rc.outline, settings.strokeColor, &settings.strokeGradient);
+                     }
+                };
+                auto DrawBody = [&]() {
+                    BitmapUtils::BlitGlyph(page.pixels, pw, ph, rc.bodyX, rc.bodyY, rc.body, settings.fillColor, &settings.fillGradient);
                     if (settings.enableInnerGlow && settings.innerGlowSize > 0) {
-                        BitmapUtils::DrawInnerGlow(result.pixels, result.width, result.height, rc.bodyX, rc.bodyY, rc.body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor, settings.innerGlowBlendMode);
+                        BitmapUtils::DrawInnerGlow(page.pixels, pw, ph, rc.bodyX, rc.bodyY, rc.body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor, settings.innerGlowBlendMode);
                     }
-                } else {
-                    BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, rc.bodyX, rc.bodyY, rc.body, settings.fillColor, &settings.fillGradient);
-                    
-                    if (settings.enableInnerGlow && settings.innerGlowSize > 0) {
-                        BitmapUtils::DrawInnerGlow(result.pixels, result.width, result.height, rc.bodyX, rc.bodyY, rc.body, settings.innerGlowSize, settings.innerGlowChoke, settings.innerGlowColor, settings.innerGlowBlendMode);
+                    if (settings.pattern.enabled) {
+                        BitmapUtils::ApplyPatternOverlay(page.pixels, pw, ph, rc.bodyX, rc.bodyY, rc.body, settings.pattern);
                     }
-                    
-                    if (settings.enableStroke && settings.strokeWidth > 0) {
-                        BitmapUtils::BlitGlyph(result.pixels, result.width, result.height, rc.outlineX, rc.outlineY, rc.outline, settings.strokeColor, &settings.strokeGradient, (settings.strokePosition == 2));
-                    }
-                }
+                };
 
-                if (settings.pattern.enabled) {
-                    BitmapUtils::ApplyPatternOverlay(result.pixels, result.width, result.height, rc.bodyX, rc.bodyY, rc.body, settings.pattern);
+                if (settings.strokePosition == 0) { 
+                    DrawStroke();
+                    DrawBody();
+                } else {
+                    DrawBody();
+                    DrawStroke();
+                     if (settings.strokePosition == 2 && settings.enableStroke && settings.strokeWidth > 0) {
+                        BitmapUtils::BlitGlyph(page.pixels, pw, ph, rc.outlineX, rc.outlineY, rc.outline, settings.strokeColor, &settings.strokeGradient, true);
+                    }
                 }
 
                 if (settings.enableBevel && settings.bevelDistance > 0) {
-                    BitmapUtils::DrawBevel(result.pixels, result.width, result.height,
+                    BitmapUtils::DrawBevel(page.pixels, pw, ph,
                                            rc.bodyX, rc.bodyY, rc.body,
                                            settings.bevelDistance, (float)settings.bevelAngle,
                                            settings.bevelSpread, settings.bevelStrength, settings.bevelType,
@@ -770,8 +894,8 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
         }));
     }
     for (auto& f : pFutures) f.wait();
+    
+    result.pages.push_back(page);
+    result.fontName = fontManager.GetFontName();
     return result;
 }
-
-// End
-

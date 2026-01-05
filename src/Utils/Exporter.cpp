@@ -14,7 +14,7 @@ using json = nlohmann::json;
 
 // --- Helper Functions for Exporters ---
 
-static void WriteXML(const AtlasResult& atlas, const std::string& folder, const std::string& filename, const std::string& pngFilename) {
+static void WriteXML(const AtlasResult& atlas, const std::string& folder, const std::string& filename, const std::vector<std::string>& pageFilenames) {
     std::filesystem::path path = std::filesystem::path(folder) / filename;
     std::ofstream o(path);
     if (!o.is_open()) return;
@@ -22,10 +22,15 @@ static void WriteXML(const AtlasResult& atlas, const std::string& folder, const 
     o << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>" << std::endl;
     o << "<!--Created using Fnt Generator-->" << std::endl;
     o << "<font>" << std::endl;
-    o << "    <info face=\"FntGenerator\" size=\"" << atlas.fontSize << "\" bold=\"0\" italic=\"0\" charset=\"\" unicode=\"1\" stretchH=\"100\" smooth=\"1\" aa=\"1\" padding=\"0,0,0,0\" spacing=\"0,0\"/>" << std::endl;
-    o << "    <common lineHeight=\"" << atlas.lineHeight << "\" base=\"" << atlas.base << "\" scaleW=\"" << atlas.width << "\" scaleH=\"" << atlas.height << "\" pages=\"1\" packed=\"0\"/>" << std::endl;
+    std::string faceName = atlas.fontName.empty() ? "FntGenerator" : atlas.fontName;
+    o << "    <info face=\"" << faceName << "\" size=\"" << atlas.fontSize << "\" bold=\"0\" italic=\"0\" charset=\"\" unicode=\"1\" stretchH=\"100\" smooth=\"1\" aa=\"1\" padding=\"0,0,0,0\" spacing=\"0,0\"/>" << std::endl;
+    o << "    <common lineHeight=\"" << atlas.lineHeight << "\" base=\"" << atlas.base << "\" scaleW=\"" << atlas.atlasWidth << "\" scaleH=\"" << atlas.atlasHeight << "\" pages=\"" << std::max(1, (int)atlas.pages.size()) << "\" packed=\"0\"/>" << std::endl;
     o << "    <pages>" << std::endl;
-    o << "        <page id=\"0\" file=\"" << pngFilename << "\"/>" << std::endl;
+    
+    for (size_t i = 0; i < pageFilenames.size(); ++i) {
+        o << "        <page id=\"" << i << "\" file=\"" << pageFilenames[i] << "\"/>" << std::endl;
+    }
+    
     o << "    </pages>" << std::endl;
     o << "    <chars count=\"" << atlas.glyphs.size() << "\">" << std::endl;
 
@@ -38,14 +43,13 @@ static void WriteXML(const AtlasResult& atlas, const std::string& folder, const 
           << "xoffset=\"" << g.xoffset << "\" "
           << "yoffset=\"" << g.yoffset << "\" "
           << "xadvance=\"" << g.advance << "\" "
-          << "page=\"0\" chnl=\"15\" letter=\"";
+          << "page=\"" << g.pageIndex << "\" chnl=\"15\" letter=\"";
 
         if (g.charCode == '"') o << "&quot;";
         else if (g.charCode == '&') o << "&amp;";
         else if (g.charCode == '<') o << "&lt;";
         else if (g.charCode == '>') o << "&gt;";
         else {
-             // Basic printable ASCII check, otherwise empty or hex if actually needed (usually empty in standard bmfont XML)
              if (g.charCode >= 32 && g.charCode <= 126) o << (char)g.charCode;
         }
         o << "\"/>" << std::endl;
@@ -57,17 +61,20 @@ static void WriteXML(const AtlasResult& atlas, const std::string& folder, const 
     o << "</font>" << std::endl;
 }
 
-static void WriteText(const AtlasResult& atlas, const std::string& folder, const std::string& filename, const std::string& pngFilename) {
+static void WriteText(const AtlasResult& atlas, const std::string& folder, const std::string& filename, const std::vector<std::string>& pageFilenames) {
     std::filesystem::path path = std::filesystem::path(folder) / filename;
     std::ofstream o(path);
     if (!o.is_open()) return;
 
     // Info
-    o << "info face=\"FntGenerator\" size=" << atlas.fontSize << " bold=0 italic=0 charset=\"\" unicode=1 stretchH=100 smooth=1 aa=1 padding=0,0,0,0 spacing=0,0" << std::endl;
+    std::string faceName = atlas.fontName.empty() ? "FntGenerator" : atlas.fontName;
+    o << "info face=\"" << faceName << "\" size=" << atlas.fontSize << " bold=0 italic=0 charset=\"\" unicode=1 stretchH=100 smooth=1 aa=1 padding=0,0,0,0 spacing=0,0" << std::endl;
     // Common
-    o << "common lineHeight=" << atlas.lineHeight << " base=" << atlas.base << " scaleW=" << atlas.width << " scaleH=" << atlas.height << " pages=1 packed=0 alphaChnl=1 redChnl=0 greenChnl=0 blueChnl=0" << std::endl;
+    o << "common lineHeight=" << atlas.lineHeight << " base=" << atlas.base << " scaleW=" << atlas.atlasWidth << " scaleH=" << atlas.atlasHeight << " pages=" << std::max(1, (int)atlas.pages.size()) << " packed=0 alphaChnl=1 redChnl=0 greenChnl=0 blueChnl=0" << std::endl;
     // Pages
-    o << "page id=0 file=\"" << pngFilename << "\"" << std::endl;
+    for (size_t i = 0; i < pageFilenames.size(); ++i) {
+        o << "page id=" << i << " file=\"" << pageFilenames[i] << "\"" << std::endl;
+    }
     // Chars
     o << "chars count=" << atlas.glyphs.size() << std::endl;
 
@@ -80,7 +87,7 @@ static void WriteText(const AtlasResult& atlas, const std::string& folder, const
           << " xoffset=" << g.xoffset
           << " yoffset=" << g.yoffset
           << " xadvance=" << g.advance
-          << " page=0 chnl=15" << std::endl;
+          << " page=" << g.pageIndex << " chnl=15" << std::endl;
     }
     // Kernings
     o << "kernings count=0" << std::endl;
@@ -92,7 +99,7 @@ static void WriteUShort(std::ofstream& o, uint16_t v) { o.write((const char*)&v,
 static void WriteInt(std::ofstream& o, int32_t v) { o.write((const char*)&v, 4); }
 static void WriteUInt(std::ofstream& o, uint32_t v) { o.write((const char*)&v, 4); }
 
-static void WriteBinary(const AtlasResult& atlas, const std::string& folder, const std::string& filename, const std::string& pngFilename) {
+static void WriteBinary(const AtlasResult& atlas, const std::string& folder, const std::string& filename, const std::vector<std::string>& pageFilenames) {
     std::filesystem::path path = std::filesystem::path(folder) / filename;
     std::ofstream o(path, std::ios::binary);
     if (!o.is_open()) return;
@@ -104,10 +111,7 @@ static void WriteBinary(const AtlasResult& atlas, const std::string& folder, con
     WriteByte(o, 3);  // Version 3
 
     // Block 1: Info
-    // Size calculation:
-    // fontSize(2) + bitField(1) + charSet(1) + stretchH(2) + aa(1) + padding(4) + spacing(2) + outline(1) + string(n+1)
-    // 14 bytes + string
-    std::string fontName = "FntGenerator";
+    std::string fontName = atlas.fontName.empty() ? "FntGenerator" : atlas.fontName;
     int32_t blockSize1 = 14 + (int32_t)fontName.length() + 1;
     
     WriteByte(o, 1); // Block Type 1
@@ -131,9 +135,9 @@ static void WriteBinary(const AtlasResult& atlas, const std::string& folder, con
     
     WriteUShort(o, (uint16_t)atlas.lineHeight);
     WriteUShort(o, (uint16_t)atlas.base);
-    WriteUShort(o, (uint16_t)atlas.width);
-    WriteUShort(o, (uint16_t)atlas.height);
-    WriteUShort(o, 1); // pages
+    WriteUShort(o, (uint16_t)atlas.atlasWidth);
+    WriteUShort(o, (uint16_t)atlas.atlasHeight);
+    WriteUShort(o, (uint16_t)std::max(1, (int)atlas.pages.size())); // pages
     WriteByte(o, 0); // bitField (packed=0)
     WriteByte(o, 0); // alpha
     WriteByte(o, 0); // red
@@ -141,11 +145,17 @@ static void WriteBinary(const AtlasResult& atlas, const std::string& folder, con
     WriteByte(o, 0); // blue
 
     // Block 3: Pages
-    // p strings (1 page)
-    int32_t blockSize3 = (int32_t)pngFilename.length() + 1;
+    // p strings
+    // Calculate total size
+    int32_t totalStringLen = 0;
+    for(const auto& s : pageFilenames) totalStringLen += (int32_t)s.length() + 1;
+
+    int32_t blockSize3 = totalStringLen;
     WriteByte(o, 3); // Block Type 3
     WriteInt(o, blockSize3);
-    o.write(pngFilename.c_str(), pngFilename.length() + 1);
+    for(const auto& s : pageFilenames) {
+        o.write(s.c_str(), s.length() + 1); // null term included
+    }
 
     // Block 4: Chars
     // 20 bytes per char
@@ -162,7 +172,7 @@ static void WriteBinary(const AtlasResult& atlas, const std::string& folder, con
         WriteShort(o, (int16_t)g.xoffset);
         WriteShort(o, (int16_t)g.yoffset);
         WriteShort(o, (int16_t)g.advance);
-        WriteByte(o, 0); // page
+        WriteByte(o, (uint8_t)g.pageIndex); // page
         WriteByte(o, 15); // chnl (all)
     }
 
@@ -175,13 +185,45 @@ bool Exporter::ExportAtlasToDisk(const AtlasResult& atlas, const std::string& de
         return false;
     }
 
-    // 1. Save Image (PNG)
-    std::string pngFilename = fileNameBase + ".png";
-    std::filesystem::path pngPath = folder / pngFilename;
+    std::vector<std::string> pageFilenames;
+    int pageCount = std::max(1, (int)atlas.pages.size());
 
-    if (!stbi_write_png(pngPath.string().c_str(), atlas.width, atlas.height, 4, atlas.pixels.data(), atlas.width * 4)) {
-        std::cerr << "Failed to write PNG to " << pngPath << std::endl;
-        return false;
+    // 1. Save Images (PNG)
+    for (int i = 0; i < pageCount; ++i) {
+        std::string pngName;
+        if (pageCount == 1) {
+             pngName = fileNameBase + ".png"; // Legacy/Simple
+        } else {
+             pngName = fileNameBase + "_" + std::to_string(i) + ".png";
+        }
+        pageFilenames.push_back(pngName);
+        
+        std::filesystem::path pngPath = folder / pngName;
+        
+        // If we have pages, use them. If not (error?), assume handle gracefull?
+        // AtlasResult should always have at least 1 page if successful, or maybe 0 if empty text?
+        // If empty, creating 1x1 dummy?
+        if (i < (int)atlas.pages.size()) {
+            const auto& p = atlas.pages[i];
+            
+            // Determine export dimensions (crop overflow if needed)
+            int exportW = p.width;
+            int exportH = p.height;
+            
+            // If this is the first page and we have a logical size limit smaller than physical, crop it
+            // This handles the "Force Grow" preview case where we want the export to be strictly the requested size
+            if (i == 0 && atlas.atlasWidth > 0 && atlas.atlasWidth < p.width) {
+                exportW = atlas.atlasWidth;
+            }
+            if (i == 0 && atlas.atlasHeight > 0 && atlas.atlasHeight < p.height) {
+                exportH = atlas.atlasHeight;
+            }
+
+            if (!stbi_write_png(pngPath.string().c_str(), exportW, exportH, 4, p.pixels.data(), p.width * 4)) {
+                std::cerr << "Failed to write PNG to " << pngPath << std::endl;
+                return false;
+            }
+        }
     }
 
     // 2. Save Data
@@ -190,15 +232,15 @@ bool Exporter::ExportAtlasToDisk(const AtlasResult& atlas, const std::string& de
     std::string fntFilename = fileNameBase + finalExt;
 
     // Dispatch
-    // format: 0=XML, 1=Text, 2=Binary
     if (format == 2) {
-        WriteBinary(atlas, destinationFolder, fntFilename, pngFilename);
+        WriteBinary(atlas, destinationFolder, fntFilename, pageFilenames);
     } else if (format == 1) {
-        WriteText(atlas, destinationFolder, fntFilename, pngFilename);
+        WriteText(atlas, destinationFolder, fntFilename, pageFilenames);
     } else {
-        WriteXML(atlas, destinationFolder, fntFilename, pngFilename);
+        WriteXML(atlas, destinationFolder, fntFilename, pageFilenames);
     }
 
     return true;
 }
+
 

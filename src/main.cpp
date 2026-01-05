@@ -10,6 +10,12 @@
 #include <cstdint>
 #include <future>
 #include <mutex>
+#include <mutex>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 #include <GLFW/glfw3.h>
 #include <string>
 #include <algorithm>
@@ -45,6 +51,7 @@ static int g_Padding = 5;
 // Atlas Size
 static int g_AtlasWidth = 0;
 static int g_AtlasHeight = 0;
+static bool g_AllowMultiPage = false;
 
 // Fill
 // Fill
@@ -606,7 +613,7 @@ const char* EXTENDED_CHARSET_STR =
     "ЁАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюяё";
 
 // Texture for the preview (Atlas)
-static GLuint g_PreviewTexture = 0;
+static std::vector<GLuint> g_PreviewTextures;
 static GLuint g_TextPreviewTexture = 0; // New: Text Line Preview
 static int g_PreviewWidth = 0;
 static int g_PreviewHeight = 0;
@@ -720,6 +727,10 @@ AtlasSettings ConstructSettings() {
 
     // SSAA
     settings.superSamplingFactor = g_SSAAFactor;
+    
+    // Multi Page
+    // Only allow multi-page if at least one dimension is Auto (0)
+    settings.allowMultiPage = g_AllowMultiPage && (g_AtlasWidth == 0 || g_AtlasHeight == 0);
 
     return settings;
 }
@@ -732,16 +743,37 @@ void UpdateAtlasTextures() {
         g_StatusIsError = true;
     }
     
-    // Update Atlas Texture (Must be called on Main Thread)
-    if (g_LastAtlas.width > 0 && g_LastAtlas.height > 0) {
-        if (g_PreviewTexture) glDeleteTextures(1, &g_PreviewTexture);
-        glGenTextures(1, &g_PreviewTexture);
-        glBindTexture(GL_TEXTURE_2D, g_PreviewTexture);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, g_LastAtlas.width, g_LastAtlas.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_LastAtlas.pixels.data());
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        g_PreviewWidth = g_LastAtlas.width;
-        g_PreviewHeight = g_LastAtlas.height;
+    // Update Atlas Textures (Must be called on Main Thread)
+    for(auto t : g_PreviewTextures) glDeleteTextures(1, &t);
+    g_PreviewTextures.clear();
+
+    if (!g_LastAtlas.pages.empty()) {
+        for(const auto& page : g_LastAtlas.pages) {
+            GLuint tex = 0;
+            glGenTextures(1, &tex);
+            glBindTexture(GL_TEXTURE_2D, tex);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, page.width, page.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, page.pixels.data());
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            g_PreviewTextures.push_back(tex);
+        }
+
+        // Calculate total logical dims (Layout: Horizontal with spacing)
+        if (g_LastAtlas.atlasWidth > 0 && g_LastAtlas.atlasHeight > 0 && g_LastAtlas.pages.size() == 1) {
+            // Use logical size if available and single page (handles overflow case)
+            g_PreviewWidth = g_LastAtlas.atlasWidth;
+            g_PreviewHeight = g_LastAtlas.atlasHeight;
+        } else {
+            // Fallback or aggregate for pages
+            g_PreviewWidth = 0;
+            g_PreviewHeight = 0;
+            int spacing = 20;
+            for(const auto& p : g_LastAtlas.pages) {
+                 g_PreviewWidth += p.width;
+                 g_PreviewHeight = std::max(g_PreviewHeight, p.height);
+            }
+            if(g_LastAtlas.pages.size() > 1) g_PreviewWidth += (int)(g_LastAtlas.pages.size() - 1) * spacing;
+        }
     }
 }
 
@@ -751,13 +783,16 @@ void UpdateTextPreview(const char* text) {
 
     g_LastTextPreview = TextureGenerator::GenerateTextPreview(g_FontManager, std::string(text), settings);
     
-    if (g_LastTextPreview.width > 0 && g_LastTextPreview.height > 0) {
-        if (g_TextPreviewTexture) glDeleteTextures(1, &g_TextPreviewTexture);
-        glGenTextures(1, &g_TextPreviewTexture);
-        glBindTexture(GL_TEXTURE_2D, g_TextPreviewTexture);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, g_LastTextPreview.width, g_LastTextPreview.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_LastTextPreview.pixels.data());
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    if (!g_LastTextPreview.pages.empty()) {
+        const auto& page = g_LastTextPreview.pages[0];
+        if (page.width > 0 && page.height > 0) {
+            if (g_TextPreviewTexture) glDeleteTextures(1, &g_TextPreviewTexture);
+            glGenTextures(1, &g_TextPreviewTexture);
+            glBindTexture(GL_TEXTURE_2D, g_TextPreviewTexture);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, page.width, page.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, page.pixels.data());
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        }
     }
 }
 
@@ -1501,6 +1536,12 @@ int main(int, char**) {
                 UpdatePreview(g_InputText);
             }
 
+            // Multi Page Toggle (Only if Auto)
+            if (g_AtlasWidth == 0 || g_AtlasHeight == 0) {
+                if (ImGui::Checkbox("Multi Page", &g_AllowMultiPage)) UpdatePreview(g_InputText);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Allow generating multiple texture pages if content doesn't fit.\nWarning: Not natively supported by some frameworks like Starling.");
+            }
+
             // Quality Settings
             const char* ssaaOptions[] = { "Standard (1x)", "High Quality (2x)", "Ultra Quality (4x)" };
             int ssaaIdx = 0;
@@ -1553,7 +1594,7 @@ int main(int, char**) {
 
             // Export
             if (ImGui::Button("Export (Select Folder)", ImVec2(-1, 40))) {
-                if (g_LastAtlas.width > 0) {
+                if (!g_LastAtlas.pages.empty()) {
                     std::string folder = Utils::PickFolderDialog();
                     if (!folder.empty()) {
                          g_StatusMessage = "Generating High Quality Atlas...";
@@ -1576,7 +1617,7 @@ int main(int, char**) {
 
                          AtlasResult hqAtlas = TextureGenerator::GenerateAtlas(g_FontManager, charset, hqSettings);
 
-                         if (!hqAtlas.hasErrors && hqAtlas.width > 0) {
+                         if (!hqAtlas.hasErrors && !hqAtlas.pages.empty()) {
                             std::string fname = (std::string(g_ExportFilename).empty()) ? "font_export" : std::string(g_ExportFilename);
                             
                              int formatEnum = 0; // Default XML
@@ -1596,14 +1637,7 @@ int main(int, char**) {
                                  
                                  // Optional: Update preview with the HQ version
                                  g_LastAtlas = hqAtlas;
-                                 if(g_PreviewTexture) glDeleteTextures(1, &g_PreviewTexture);
-                                 glGenTextures(1, &g_PreviewTexture);
-                                  glBindTexture(GL_TEXTURE_2D, g_PreviewTexture);
-                                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-                                 glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, g_LastAtlas.width, g_LastAtlas.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_LastAtlas.pixels.data());
-                                 g_PreviewWidth = g_LastAtlas.width;
-                                 g_PreviewHeight = g_LastAtlas.height;
+                                 UpdateAtlasTextures(); // Re-use the existing function to update textures correctly
                                  
                             } else {
                                  g_StatusMessage = "Export Failed!";
@@ -1655,11 +1689,13 @@ int main(int, char**) {
                     if (ImGui::SmallButton("1:1##Text")) { g_TextZoom = 1.0f; g_TextPan = { 0,0 }; }
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Fit##Text")) {
-                        float fitW = ImGui::GetContentRegionAvail().x / (float)g_LastTextPreview.width;
-                        float fitH = ImGui::GetContentRegionAvail().y / (float)g_LastTextPreview.height;
-                        g_TextZoom = std::min(fitW, fitH);
-                        if (g_TextZoom > 1.0f) g_TextZoom = 1.0f;
-                        g_TextPan = { 0,0 };
+                        if (!g_LastTextPreview.pages.empty()) {
+                            float fitW = ImGui::GetContentRegionAvail().x / (float)g_LastTextPreview.pages[0].width;
+                            float fitH = ImGui::GetContentRegionAvail().y / (float)g_LastTextPreview.pages[0].height;
+                            g_TextZoom = std::min(fitW, fitH);
+                            if (g_TextZoom > 1.0f) g_TextZoom = 1.0f;
+                            g_TextPan = { 0,0 };
+                        }
                     }
                      
                     ImVec2 p_min = ImGui::GetCursorScreenPos();
@@ -1687,8 +1723,10 @@ int main(int, char**) {
                             if (g_TextZoom > 20.0f) g_TextZoom = 20.0f;
                         }
 
-                        float imgW = g_LastTextPreview.width * g_TextZoom;
-                        float imgH = g_LastTextPreview.height * g_TextZoom;
+                        if (!g_LastTextPreview.pages.empty()) {
+                            const auto& page = g_LastTextPreview.pages[0];
+                            float imgW = page.width * g_TextZoom;
+                            float imgH = page.height * g_TextZoom;
 
                         // Center by default if smaller than canvas
                         ImVec2 offset = g_TextPan;
@@ -1711,6 +1749,7 @@ int main(int, char**) {
                                 g_TextPan.y += delta.y;
                             }
                         }
+                        }
                     } else {
                         ImGui::Text("Preview generation failed or empty.");
                     }
@@ -1731,11 +1770,13 @@ int main(int, char**) {
                     if (ImGui::SmallButton("1:1")) { g_AtlasZoom = 1.0f; g_AtlasPan = {0,0}; }
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Fit")) {
-                        float fitW = ImGui::GetContentRegionAvail().x / (float)g_PreviewWidth;
-                        float fitH = ImGui::GetContentRegionAvail().y / (float)g_PreviewHeight;
-                        g_AtlasZoom = std::min(fitW, fitH);
-                        if (g_AtlasZoom > 1.0f) g_AtlasZoom = 1.0f;
-                        g_AtlasPan = {0,0};
+                        if (g_PreviewHeight > 0 && g_PreviewWidth > 0) {
+                            float fitW = ImGui::GetContentRegionAvail().x / (float)g_PreviewWidth;
+                            float fitH = ImGui::GetContentRegionAvail().y / (float)g_PreviewHeight;
+                            g_AtlasZoom = std::min(fitW, fitH);
+                            if (g_AtlasZoom > 1.0f) g_AtlasZoom = 1.0f;
+                            g_AtlasPan = {0,0};
+                        }
                     }
 
                     ImVec2 p_min = ImGui::GetCursorScreenPos();
@@ -1754,7 +1795,7 @@ int main(int, char**) {
                     }
 
                     // Atlas Interaction & Display
-                    if (g_PreviewTexture) {
+                    if (!g_PreviewTextures.empty()) {
                         // Zoom via Scroll
                         if (ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel != 0) {
                             float zoomStep = 0.1f * g_AtlasZoom;
@@ -1763,21 +1804,133 @@ int main(int, char**) {
                             if (g_AtlasZoom > 20.0f) g_AtlasZoom = 20.0f;
                         }
 
-                        float imgW = g_PreviewWidth * g_AtlasZoom;
-                        float imgH = g_PreviewHeight * g_AtlasZoom;
+                        // Determine layout dimensions
+                        float spacing = 20.0f * g_AtlasZoom;
+                        float totalLogicW = 0;
+                        float maxLogicH = 0;
+                        for(const auto& page : g_LastAtlas.pages) {
+                            totalLogicW += page.width * g_AtlasZoom;
+                            maxLogicH = std::max(maxLogicH, (float)page.height * g_AtlasZoom);
+                        }
+                        if(g_LastAtlas.pages.size() > 1) totalLogicW += (g_LastAtlas.pages.size() - 1) * spacing;
 
                         // Center by default if smaller than canvas
                         ImVec2 offset = g_AtlasPan;
-                        if (imgW < canvas_sz.x) offset.x = (canvas_sz.x - imgW) * 0.5f;
-                        if (imgH < canvas_sz.y) offset.y = (canvas_sz.y - imgH) * 0.5f;
+                        if (totalLogicW < canvas_sz.x) offset.x = (canvas_sz.x - totalLogicW) * 0.5f;
+                        if (maxLogicH < canvas_sz.y) offset.y = (canvas_sz.y - maxLogicH) * 0.5f;
 
-                        ImVec2 imgPos = ImVec2(p_min.x + offset.x, p_min.y + offset.y);
-                        draw_list->AddImage((void*)(intptr_t)g_PreviewTexture, imgPos, ImVec2(imgPos.x + imgW, imgPos.y + imgH));
+                        float currentX = p_min.x + offset.x;
+                        float startY = p_min.y + offset.y;
 
-                        // 3. Out-of-Atlas Highlight (Logical border)
-                        float logicalW = g_LastAtlas.atlasWidth * g_AtlasZoom;
-                        float logicalH = g_LastAtlas.atlasHeight * g_AtlasZoom;
-                        draw_list->AddRect(imgPos, ImVec2(imgPos.x + logicalW, imgPos.y + logicalH), IM_COL32(255, 255, 0, 150), 0, 0, 2.0f);
+                        // Draw Loop
+                        for (size_t i = 0; i < g_PreviewTextures.size(); i++) {
+                             if (i >= g_LastAtlas.pages.size()) break; 
+                             const auto& page = g_LastAtlas.pages[i];
+                             GLuint tex = g_PreviewTextures[i];
+                             
+                             float pW = page.width * g_AtlasZoom;
+                             float pH = page.height * g_AtlasZoom;
+                             
+                             ImVec2 pos(currentX, startY);
+                             draw_list->AddImage((void*)(intptr_t)tex, pos, ImVec2(pos.x + pW, pos.y + pH));
+                             
+                             int logicalW = (g_LastAtlas.atlasWidth > 0) ? g_LastAtlas.atlasWidth : page.width;
+                             int logicalH = (g_LastAtlas.atlasHeight > 0) ? g_LastAtlas.atlasHeight : page.height;
+
+                             float lW = logicalW * g_AtlasZoom;
+                             float lH = logicalH * g_AtlasZoom;
+
+                             // Border (Yellow for Logical Page Boundary)
+                             draw_list->AddRect(pos, ImVec2(pos.x + lW, pos.y + lH), IM_COL32(255, 255, 0, 150), 0, 0, 2.0f);
+
+                             // Overflow Overlay (Red/Dark Tint)
+                             if (page.width > logicalW || page.height > logicalH) {
+                                 // Horizontal Strip (Right side)
+                                 if (page.width > logicalW) {
+                                     draw_list->AddRectFilled(
+                                         ImVec2(pos.x + lW, pos.y), 
+                                         ImVec2(pos.x + pW, pos.y + pH), 
+                                         IM_COL32(50, 0, 0, 100) // Reddish-Dark Tint
+                                     );
+                                      draw_list->AddRect(
+                                         ImVec2(pos.x + lW, pos.y), 
+                                         ImVec2(pos.x + pW, pos.y + pH), 
+                                         IM_COL32(255, 0, 0, 100) // Red Border
+                                     );
+                                 }
+                                 // Vertical Strip (Bottom side, excluding the corner if already covered)
+                                 if (page.height > logicalH) {
+                                     float rightX = (page.width > logicalW) ? (pos.x + lW) : (pos.x + pW);
+                                     draw_list->AddRectFilled(
+                                         ImVec2(pos.x, pos.y + lH), 
+                                         ImVec2(rightX, pos.y + pH), 
+                                         IM_COL32(50, 0, 0, 100) 
+                                     );
+                                     draw_list->AddRect(
+                                         ImVec2(pos.x, pos.y + lH), 
+                                         ImVec2(rightX, pos.y + pH), 
+                                         IM_COL32(255, 0, 0, 100) 
+                                     );
+                                 }
+                             }
+                             
+                             // Page ID
+                             char pageLabel[32];
+                             sprintf(pageLabel, "Page %d", (int)i);
+                             draw_list->AddText(ImVec2(pos.x, pos.y - 15), IM_COL32(255, 255, 255, 255), pageLabel);
+
+                             // Glyph Hover logic
+                             ImVec2 mousePos = ImGui::GetMousePos();
+                             if (ImGui::IsWindowHovered() &&
+                                 mousePos.x >= pos.x && mousePos.x < pos.x + pW &&
+                                 mousePos.y >= pos.y && mousePos.y < pos.y + pH) 
+                             {
+                                 int relX = (int)((mousePos.x - pos.x) / g_AtlasZoom);
+                                 int relY = (int)((mousePos.y - pos.y) / g_AtlasZoom);
+                                 
+                                 int hoveredIndex = -1;
+                                 for (size_t k = 0; k < g_LastAtlas.glyphs.size(); k++) {
+                                     const auto& g = g_LastAtlas.glyphs[k];
+                                     if (g.pageIndex == (int)i) {
+                                         if (relX >= g.x && relX < g.x + g.width &&
+                                             relY >= g.y && relY < g.y + g.height) {
+                                             hoveredIndex = (int)k;
+                                             break;
+                                         }
+                                     }
+                                 }
+                                 
+                                 if (hoveredIndex != -1) {
+                                     const auto& g = g_LastAtlas.glyphs[hoveredIndex];
+                                     float sX = pos.x + g.x * g_AtlasZoom;
+                                     float sY = pos.y + g.y * g_AtlasZoom;
+                                     float sW = g.width * g_AtlasZoom;
+                                     float sH = g.height * g_AtlasZoom;
+                                     draw_list->AddRect(ImVec2(sX, sY), ImVec2(sX + sW, sY + sH), IM_COL32(0, 255, 0, 255), 0.0f, 0, 2.0f);
+                                     
+                                     ImGui::BeginTooltip();
+                                     std::string charStr = Utils::EncodeUtf8({g.charCode});
+                                     ImGui::Text("Char: %s (U+%04X)", charStr.c_str(), g.charCode);
+                                     ImGui::Text("Size: %dx%d", g.width, g.height);
+                                     ImGui::Text("Pos: %d, %d (Page %d)", g.x, g.y, g.pageIndex);
+                                     
+                                     // Overflow Warning in Tooltip
+                                     if (g.x + g.width > logicalW || g.y + g.height > logicalH) {
+                                         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 100, 100, 255));
+                                         ImGui::Text("WARNING: Glyph outside atlas bounds!");
+                                         ImGui::PopStyleColor();
+                                     }
+
+                                     ImGui::EndTooltip();
+                                     
+                                     if (ImGui::IsMouseClicked(0)) {
+                                         g_SelectedGlyphIndex = hoveredIndex;
+                                         ImGui::OpenPopup("GlyphContext");
+                                     }
+                                 }
+                             }
+                             currentX += pW + spacing;
+                        }
 
                         // Panning
                         if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
@@ -1790,47 +1943,6 @@ int main(int, char**) {
                                 ImVec2 delta = ImGui::GetIO().MouseDelta;
                                 g_AtlasPan.x += delta.x;
                                 g_AtlasPan.y += delta.y;
-                            }
-                        }
-
-                        // Glyph Hover logic
-                        ImVec2 mousePos = ImGui::GetMousePos();
-                        if (ImGui::IsWindowHovered() &&
-                            mousePos.x >= imgPos.x && mousePos.x < imgPos.x + imgW &&
-                            mousePos.y >= imgPos.y && mousePos.y < imgPos.y + imgH) 
-                        {
-                            int atlasX = (int)((mousePos.x - imgPos.x) / g_AtlasZoom);
-                            int atlasY = (int)((mousePos.y - imgPos.y) / g_AtlasZoom);
-                            
-                            int hoveredIndex = -1;
-                            for (size_t i = 0; i < g_LastAtlas.glyphs.size(); i++) {
-                                const auto& g = g_LastAtlas.glyphs[i];
-                                if (atlasX >= g.x && atlasX < g.x + g.width &&
-                                    atlasY >= g.y && atlasY < g.y + g.height) {
-                                    hoveredIndex = (int)i;
-                                    break;
-                                }
-                            }
-                            
-                            if (hoveredIndex != -1) {
-                                const auto& g = g_LastAtlas.glyphs[hoveredIndex];
-                                float sX = imgPos.x + g.x * g_AtlasZoom;
-                                float sY = imgPos.y + g.y * g_AtlasZoom;
-                                float sW = g.width * g_AtlasZoom;
-                                float sH = g.height * g_AtlasZoom;
-                                draw_list->AddRect(ImVec2(sX, sY), ImVec2(sX + sW, sY + sH), IM_COL32(0, 255, 0, 255), 0.0f, 0, 2.0f);
-                                
-                                ImGui::BeginTooltip();
-                                ImGui::Text("Char: %c (U+%04X)", (char)g.charCode, g.charCode);
-                                ImGui::Text("Size: %dx%d", g.width, g.height);
-                                ImGui::Text("Pos: %d, %d", g.x, g.y);
-                                if (g.y >= g_LastAtlas.atlasHeight) ImGui::TextColored(ImVec4(1,0.5f,0.5f,1), "OUT OF ATLAS BOUNDS");
-                                ImGui::EndTooltip();
-                                
-                                if (ImGui::IsMouseClicked(0)) {
-                                    g_SelectedGlyphIndex = hoveredIndex;
-                                    ImGui::OpenPopup("GlyphContext");
-                                }
                             }
                         }
                         

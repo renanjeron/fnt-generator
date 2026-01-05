@@ -10,12 +10,20 @@ struct GlyphPlacement {
     int x, y, width, height;
     int xoffset, yoffset;
     int advance;
+    int pageIndex = 0; // Added for multi-page support
+};
+
+struct AtlasPage {
+    int id;
+    int width;
+    int height;
+    std::vector<unsigned char> pixels; // RGBA buffer
 };
 
 struct AtlasResult {
-    std::vector<unsigned char> pixels; // RGBA buffer
-    int width;  // Buffer width
-    int height; // Buffer height
+    std::vector<AtlasPage> pages; // Multiple pages support
+    // int width;  // Deprecated/Moved to Page
+    // int height; // Deprecated/Moved to Page
     
     // Logical Atlas size (for out-of-bounds coloring)
     int atlasWidth = 0;
@@ -32,6 +40,8 @@ struct AtlasResult {
     int fontSize = 0;
     int lineHeight = 0;
     int base = 0; // Ascender
+    
+    std::string fontName; // Added for export
 };
 
 // --- Structures ---
@@ -95,6 +105,9 @@ struct AtlasSettings {
     int globalXAdvance = 0;
     int globalXOffset = 0;
     int globalYOffset = 0;
+    
+    // Multi-Page Control
+    bool allowMultiPage = true;
 };
 
 class TextureGenerator {
