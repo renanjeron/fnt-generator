@@ -43,6 +43,10 @@
 #define GL_CLAMP_TO_EDGE 0x812F
 #endif
 
+#ifndef APP_VERSION
+#define APP_VERSION "1.1.0-dev"
+#endif
+
 
 
 // --- State Variables ---
@@ -171,10 +175,33 @@ static std::string g_RecentNotFoundPath = "";
 
 
 
-// Simple JSON helpers
-void SaveStyle(const std::string& path);
-void LoadStyle(const std::string& path);
-// Custom Knob Widget
+// Simple Fingerprint to detect actual changes in gradients
+struct GradientFingerprint {
+    struct Mark {
+        float pos;
+        float r, g, b, a;
+    };
+    std::vector<Mark> marks;
+    bool operator!=(const GradientFingerprint& o) const {
+        if (marks.size() != o.marks.size()) return true;
+        for (size_t i = 0; i < marks.size(); i++) {
+            if (marks[i].pos != o.marks[i].pos || marks[i].r != o.marks[i].r || 
+                marks[i].g != o.marks[i].g || marks[i].b != o.marks[i].b || marks[i].a != o.marks[i].a) return true;
+        }
+        return false;
+    }
+};
+
+static GradientFingerprint GetFingerprint(const ImGG::GradientWidget& w) {
+    GradientFingerprint fp;
+    for (const auto& m : w.gradient().get_marks()) {
+        fp.marks.push_back({ m.position.get(), m.color.x, m.color.y, m.color.z, m.color.w });
+    }
+    return fp;
+}
+
+static GradientFingerprint g_LastFillFp;
+static GradientFingerprint g_LastStrokeFp;
 
 
 AtlasSettings ConstructSettings();
@@ -565,6 +592,8 @@ void LoadStyle(const std::string& path) {
     }
     
     UpdatePreview(g_InputText);
+    g_LastFillFp = GetFingerprint(g_FillGradientWidget);
+    g_LastStrokeFp = GetFingerprint(g_StrokeGradientWidget);
 }
 
 // Toggle favorite status
@@ -816,7 +845,9 @@ int main(int, char**) {
     int winW = 1280, winH = 720, winX = 100, winY = 100;
     Utils::LoadWindowConfig(winX, winY, winW, winH, g_SSAAFactor);
 
-    GLFWwindow* window = glfwCreateWindow(winW, winH, "Fnt Generator", NULL, NULL);
+    char title[128];
+    sprintf(title, "Fnt Generator v%s", APP_VERSION);
+    GLFWwindow* window = glfwCreateWindow(winW, winH, title, NULL, NULL);
     if (window == NULL)
         return 1;
         
@@ -1309,7 +1340,11 @@ int main(int, char**) {
                 
                 ImGui::Dummy(ImVec2(0, 5));
                 if (g_FillGradientWidget.widget("Fill Gradient")) {
-                    UpdatePreview(g_InputText);
+                    auto current = GetFingerprint(g_FillGradientWidget);
+                    if (current != g_LastFillFp) {
+                        g_LastFillFp = current;
+                        UpdatePreview(g_InputText);
+                    }
                 }
                 ImGui::Dummy(ImVec2(0, 10));
             }
@@ -1395,7 +1430,11 @@ int main(int, char**) {
 
                      ImGui::Dummy(ImVec2(0, 5));
                      if (g_StrokeGradientWidget.widget("Stroke Gradient")) {
-                         UpdatePreview(g_InputText);
+                         auto current = GetFingerprint(g_StrokeGradientWidget);
+                         if (current != g_LastStrokeFp) {
+                             g_LastStrokeFp = current;
+                             UpdatePreview(g_InputText);
+                         }
                      }
                      ImGui::Dummy(ImVec2(0, 10));
                 }
@@ -1624,7 +1663,7 @@ int main(int, char**) {
                                         g_PatternThumbnails.push_back(tex);
                                     }
                                     g_ShowPatternSelector = true;
-                                    ImGui::OpenPopup("Select Pattern");
+                                    g_RequestPatternPopup = true; 
                                 } else {
                                      g_StatusMessage = "Error: Failed to load .pat file. See pat_debug_log.txt for details.";
                                      g_StatusTime = ImGui::GetTime();

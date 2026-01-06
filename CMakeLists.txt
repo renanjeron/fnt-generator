@@ -5,7 +5,7 @@ set(CMAKE_POLICY_DEFAULT_CMP0077 NEW) # Start allowing option() to override cach
 cmake_policy(SET CMP0169 OLD) # Suppress FetchContent_Populate deprecation warning
 set(CMAKE_POLICY_VERSION_MINIMUM "3.5")
 
-project(FntGenerator VERSION 1.0.4 LANGUAGES CXX)
+project(FntGenerator VERSION 1.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -141,7 +141,10 @@ target_include_directories(FntGenerator PRIVATE
     ${imgui_gradient_SOURCE_DIR}/include
 )
 
-target_compile_definitions(FntGenerator PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
+target_compile_definitions(FntGenerator PRIVATE 
+    IMGUI_DEFINE_MATH_OPERATORS
+    APP_VERSION="${PROJECT_VERSION}"
+)
 
 target_link_libraries(FntGenerator PRIVATE
     glfw
@@ -173,8 +176,8 @@ if(APPLE)
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_BUNDLE_NAME "Fnt Generator"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.renanjeron.fntgenerator"
-        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.4"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.4"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
         MACOSX_BUNDLE_COPYRIGHT "Copyright © 2026"
         MACOSX_BUNDLE_ICON_FILE "icon.icns"
     )
