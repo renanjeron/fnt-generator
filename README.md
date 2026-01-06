@@ -7,7 +7,7 @@ A cross-platform (Windows, macOS, Linux) tool for generating bitmap font atlases
 ## Features
 
 - **Cross-Platform:** Runs on Windows, macOS, and Linux.
-- **High Quality:** Uses FreeType with configurable hinting (Smooth, Sharp, Crisp) and Super Sampling Anti-Aliasing (SSAA 2x).
+- **High Quality:** Uses FreeType with configurable hinting (Smooth, Sharp, Crisp) and Super Sampling Anti-Aliasing (SSAA 2x and 4x).
 - **Custom Glyphs:** Select predefined unicode ranges or custom glyph sets and manage presets for easy reuse.
 - **Adjust Characters:** Adjust character metrics (xAdvance, xOffset, yOffset) for fine-tuning.
 - **Advanced Effects:** 
@@ -16,7 +16,9 @@ A cross-platform (Windows, macOS, Linux) tool for generating bitmap font atlases
   - Inner Glow
   - Bevel/Emboss
   - Gradient Fills
+  - Pattern Fill (JPG, PNG and Photoshop .PAT files)
 - **Real-Time Preview:** Visualize your atlas and text rendering instantly.
+- **Atlas Generation:** Generate bitmap font atlases with configurable padding and multi-page support.
 - **Export:** Generates industry-standard `.fnt` (XML, Binary, Text) and `.png` atlases compatible with popular game engines (AngelCode BMFont format).
 - **Style Persistence:** Save and load your favorite font styles.
 
@@ -79,11 +81,12 @@ A cross-platform (Windows, macOS, Linux) tool for generating bitmap font atlases
 
 ## Usage Guide
 
-1. **Load Font:** Click the folder icon to select a `.ttf` or `.otf` font file from your system.
+1. **Load Font:** Select a font installed on your system.
 2. **Adjust Size:** Set the font size and padding.
-3. **Apply Effects:** Enable Stroke, Shadow, etc., and tweak parameters in real-time.
-4. **Hinting:** Choose "Smooth (No Hinting)" for best results in games/textures.
-5. **Export:** Click "Export", choose a destination folder, and the tool will generate the `.fnt` and `.png` files.
+3. **Select Glyphs:** Choose the glyphs you want to include in the atlas.
+4. **Apply Effects:** Enable Stroke, Shadow, etc., and tweak parameters in real-time.
+5. **Hinting:** Choose "Smooth (No Hinting)" for best results in games/textures.
+6. **Export:** Click "Export", choose a destination folder, and the tool will generate the `.fnt` and `.png` files.
 
 ## Project Structure
 
@@ -99,6 +102,7 @@ A cross-platform (Windows, macOS, Linux) tool for generating bitmap font atlases
 
 This project relies on these amazing open-source libraries:
 
+- **[BMFont](https://www.angelcode.com/products/bmfont/)**: Industry-standard font format file for bitmap fonts.
 - **[FreeType](https://freetype.org/)**: Robust font rendering engine.
 - **[Dear ImGui](https://github.com/ocornut/imgui)**: Bloat-free Immediate Mode GUI for C++.
 - **[ImGui Gradient](https://github.com/Coollab-Art/imgui_gradient)**: Gradient editor for Dear ImGui.

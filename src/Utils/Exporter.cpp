@@ -19,6 +19,8 @@ static void WriteXML(const AtlasResult& atlas, const std::string& folder, const 
     std::ofstream o(path);
     if (!o.is_open()) return;
 
+
+
     o << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>" << std::endl;
     o << "<!--Created using Fnt Generator-->" << std::endl;
     o << "<font>" << std::endl;
@@ -56,7 +58,10 @@ static void WriteXML(const AtlasResult& atlas, const std::string& folder, const 
     }
     
     o << "    </chars>" << std::endl;
-    o << "    <kernings count=\"0\">" << std::endl;
+    o << "    <kernings count=\"" << atlas.kernings.size() << "\">" << std::endl;
+    for (const auto& k : atlas.kernings) {
+        o << "        <kerning first=\"" << k.first << "\" second=\"" << k.second << "\" amount=\"" << k.amount << "\"/>" << std::endl;
+    }
     o << "    </kernings>" << std::endl;
     o << "</font>" << std::endl;
 }
@@ -90,7 +95,11 @@ static void WriteText(const AtlasResult& atlas, const std::string& folder, const
           << " page=" << g.pageIndex << " chnl=15" << std::endl;
     }
     // Kernings
-    o << "kernings count=0" << std::endl;
+    // Kernings
+    o << "kernings count=" << atlas.kernings.size() << std::endl;
+    for (const auto& k : atlas.kernings) {
+        o << "kerning first=" << k.first << " second=" << k.second << " amount=" << k.amount << std::endl;
+    }
 }
 
 static void WriteByte(std::ofstream& o, uint8_t v) { o.write((const char*)&v, 1); }
@@ -176,7 +185,21 @@ static void WriteBinary(const AtlasResult& atlas, const std::string& folder, con
         WriteByte(o, 15); // chnl (all)
     }
 
-    // Block 5: Kerning (Empty) (To-do?)
+    // Block 5: Kerning
+    // 10 bytes per pair (Type 5)
+    // Structure: 4 bytes first, 4 bytes second, 2 bytes amount
+    int32_t numKernings = (int32_t)atlas.kernings.size();
+    if(numKernings > 0) {
+        int32_t blockSize5 = numKernings * 10;
+        WriteByte(o, 5); // Block Type 5
+        WriteInt(o, blockSize5);
+        
+        for(const auto& k : atlas.kernings) {
+            WriteUInt(o, k.first);
+            WriteUInt(o, k.second);
+            WriteShort(o, (int16_t)k.amount);
+        }
+    }
 }
 
 bool Exporter::ExportAtlasToDisk(const AtlasResult& atlas, const std::string& destinationFolder, const std::string& fileNameBase, int format, const std::string& extension) {

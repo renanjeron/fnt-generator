@@ -1,6 +1,8 @@
 #include "FontManager.h"
 #include <iostream>
 #include <cstdint>
+#include FT_SFNT_NAMES_H
+#include <sstream>
 
 FontManager::FontManager() {
 }
@@ -51,6 +53,8 @@ bool FontManager::LoadFont(const std::string& path) {
         return false;
     }
 
+    m_currentPath = path;
+
     // Set default size
     SetSize(m_currentSize);
     return true;
@@ -69,6 +73,18 @@ std::string FontManager::GetFontName() const {
         return std::string(m_face->family_name) + " " + std::string(m_face->style_name);
     }
     return "None";
+}
+
+bool FontManager::HasGlyphs(const std::vector<uint32_t>& charCodes) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!m_face) return false;
+    
+    for (uint32_t code : charCodes) {
+        if (FT_Get_Char_Index(m_face, code) == 0) {
+            return false;
+        }
+    }
+    return true;
 }
 
 GlyphBitmap FontManager::RenderGlyph(uint32_t charCode, FT_Int32 loadFlags) {
@@ -235,6 +251,11 @@ bool FontManager::HasGlyph(uint32_t charCode) const {
     return FT_Get_Char_Index(m_face, charCode) != 0;
 }
 
+bool FontManager::HasKerning() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_face && FT_HAS_KERNING(m_face);
+}
+
 int FontManager::GetAscender() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_face ? (m_face->size->metrics.ascender >> 6) : 0;
@@ -257,3 +278,118 @@ int FontManager::GetKerning(uint32_t left, uint32_t right) {
     FT_Get_Kerning(m_face, FT_Get_Char_Index(m_face, left), FT_Get_Char_Index(m_face, right), FT_KERNING_DEFAULT, &kerning);
     return kerning.x >> 6;
 }
+
+static std::string Utf16BEToUtf8(const uint8_t* data, size_t len) {
+    std::string res;
+    // Iterate over 16-bit units
+    for (size_t i = 0; i + 1 < len; i += 2) {
+        // Read Big Endian
+        uint16_t c = (data[i] << 8) | data[i+1];
+        
+        // Simple UTF-16 to UTF-8 (handling only BMP for now)
+        if (c < 0x80) {
+            res += (char)c;
+        } else if (c < 0x800) {
+            res += (char)(0xC0 | (c >> 6));
+            res += (char)(0x80 | (c & 0x3F));
+        } else {
+            res += (char)(0xE0 | (c >> 12));
+            res += (char)(0x80 | ((c >> 6) & 0x3F));
+            res += (char)(0x80 | (c & 0x3F));
+        }
+    }
+    return res;
+}
+
+static std::string GetNameIDString(FT_UShort name_id) {
+    switch (name_id) {
+        case 0: return "Copyright";
+        case 1: return "Font Family";
+        case 2: return "Font Subfamily";
+        case 3: return "Unique ID";
+        case 4: return "Full Name";
+        case 5: return "Version";
+        case 6: return "PostScript Name";
+        case 7: return "Trademark";
+        case 8: return "Manufacturer";
+        case 9: return "Designer";
+        case 10: return "Description";
+        case 11: return "Manufacturer URL";
+        case 12: return "Designer URL";
+        case 13: return "License";
+        case 14: return "License URL";
+        case 16: return "Typographic Family";
+        case 17: return "Typographic Subfamily";
+        case 21: return "WWS Family";
+        case 22: return "WWS Subfamily";
+        default: {
+            std::stringstream ss;
+            ss << "ID " << name_id;
+            return ss.str();
+        }
+    }
+}
+
+static std::string GetLanguageString(FT_UShort platform_id, FT_UShort language_id) {
+    if (platform_id == 3) { // Windows
+        // Mask 0xFF to get primary language
+        uint8_t primary = language_id & 0xFF;
+        switch (primary) {
+            case 0x09: return "en";
+            case 0x0A: return "es";
+            case 0x0C: return "fr";
+            case 0x07: return "de";
+            case 0x10: return "it";
+            case 0x16: return "pt";
+            case 0x19: return "ru";
+            case 0x11: return "ja";
+            case 0x12: return "ko";
+            case 0x04: return "zh";
+            default: break;
+        }
+    } else if (platform_id == 1) { // Mac
+        if (language_id == 0) return "en";
+    }
+    std::stringstream ss;
+    ss << platform_id << ":" << language_id;
+    return ss.str();
+}
+
+FontMetadata FontManager::GetMetadata() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    FontMetadata meta;
+    if (!m_face) return meta;
+
+    FT_UInt count = FT_Get_Sfnt_Name_Count(m_face);
+    for (FT_UInt i = 0; i < count; ++i) {
+        FT_SfntName entry;
+        if (FT_Get_Sfnt_Name(m_face, i, &entry) != 0) continue;
+
+        // Only interested in Platform 1 (Mac) with Encoding 0 (Roman) 
+        // OR Platform 3 (Windows) with Encoding 1 (Unicode) or 10 (UCS-4)
+        
+        std::string value;
+        bool keep = false;
+
+        if (entry.platform_id == 3 && (entry.encoding_id == 1 || entry.encoding_id == 10)) {
+            // Windows Unicode (UTF-16BE)
+            value = Utf16BEToUtf8(entry.string, entry.string_len);
+            keep = true;
+        } else if (entry.platform_id == 1 && entry.encoding_id == 0) {
+            // Mac Roman - treating as ASCII/Latin-1 for simplicity or raw
+            // Most basic Mac Roman matches ASCII for < 127
+            value.assign((const char*)entry.string, entry.string_len);
+            keep = true;
+        }
+
+        if (keep && !value.empty()) {
+            FontMetadataEntry item;
+            item.nameID = GetNameIDString(entry.name_id);
+            item.language = GetLanguageString(entry.platform_id, entry.language_id);
+            item.value = value;
+            meta.push_back(item);
+        }
+    }
+    return meta;
+}
+

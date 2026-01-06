@@ -7,6 +7,7 @@
 #include FT_STROKER_H
 #include <mutex>
 
+
 struct GlyphBitmap {
     std::vector<unsigned char> buffer;
     int width;
@@ -15,6 +16,14 @@ struct GlyphBitmap {
     int bearingY;
     int advance;
 };
+
+struct FontMetadataEntry {
+    std::string nameID;   // e.g. "Copyright", "Family"
+    std::string language; // e.g. "en-US"
+    std::string value;    // The actual string
+};
+
+using FontMetadata = std::vector<FontMetadataEntry>;
 
 class FontManager {
 public:
@@ -52,18 +61,30 @@ public:
     // Check if the font validates/contains a specific character code
     bool HasGlyph(uint32_t charCode) const;
 
+    // Check if the font has kerning information (legacy kern table)
+    bool HasKerning() const;
+
     // Check if a font is currently loaded
     bool IsLoaded() const { return m_face != nullptr; }
+
+    std::string GetFilePath() const { return m_currentPath; }
+    
+    // Check if the font has all glyphs in the list
+    bool HasGlyphs(const std::vector<uint32_t>& charCodes) const;
     
     // Get font metrics
     int GetAscender() const;
     int GetDescender() const;
     int GetLineHeight() const;
 
+    // Get all available metadata (SFNT names)
+    FontMetadata GetMetadata() const;
+
 private:
     FT_Library m_library = nullptr;
     FT_Face m_face = nullptr;
     FT_Stroker m_stroker = nullptr;
     int m_currentSize = 24;
+    std::string m_currentPath = "";
     mutable std::mutex m_mutex;
 };

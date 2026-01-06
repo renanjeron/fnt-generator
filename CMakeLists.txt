@@ -111,7 +111,7 @@ else()
     list(APPEND PLATFORM_SOURCES src/Utils/PlatformUtils_Linux.cpp)
 endif()
 
-add_executable(FntGenerator WIN32 MACOSX_BUNDLE
+add_executable(FntGenerator MACOSX_BUNDLE
     src/main.cpp
     src/Font/FontManager.cpp
     src/Atlas/TextureGenerator.cpp
@@ -123,6 +123,7 @@ add_executable(FntGenerator WIN32 MACOSX_BUNDLE
     src/Utils/UIUtils.cpp
     src/Utils/PatLoader.cpp
     src/Utils/FontPreviewUtils.cpp
+    src/UI/FontInfoDialog.cpp
     ${IMGUI_SOURCES}
     ${PLATFORM_SOURCES}
     ${IMGUI_GRADIENT_SOURCES}

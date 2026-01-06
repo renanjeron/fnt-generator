@@ -4,6 +4,7 @@
 #include "imgui_impl_opengl3.h"
 #include <imgui_gradient/imgui_gradient.hpp>
 #include <stdio.h>
+
 #include <cmath>
 #include <vector>
 #include "Utils/PatLoader.h"
@@ -35,6 +36,7 @@
 #include "Utils/StyleUtils.h"
 #include "Utils/UIUtils.h"
 #include "Utils/FontPreviewUtils.h"
+#include "UI/FontInfoDialog.h"
 
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE 0x812F
@@ -152,6 +154,8 @@ static bool g_IsPanningText = false;
 static int g_GlobalXAdvance = 0;
 static int g_GlobalXOffset = 0;
 static int g_GlobalYOffset = 0;
+// Kerning
+static bool g_EnableKerning = true;
 
 // Favorite fonts system
 static std::set<std::string> g_FavoriteFonts;
@@ -586,7 +590,9 @@ AtlasSettings ConstructSettings() {
     settings.atlasWidth = g_AtlasWidth;
     settings.atlasHeight = g_AtlasHeight;
     settings.superSamplingFactor = g_SSAAFactor;
+    settings.superSamplingFactor = g_SSAAFactor;
     settings.hintingMode = g_HintingMode;
+    settings.enableKerning = g_EnableKerning;
     
     // Fill
     // Fill
@@ -684,8 +690,7 @@ AtlasSettings ConstructSettings() {
     settings.superSamplingFactor = g_SSAAFactor;
     
     // Multi Page
-    // Only allow multi-page if at least one dimension is Auto (0)
-    settings.allowMultiPage = g_AllowMultiPage && (g_AtlasWidth == 0 || g_AtlasHeight == 0);
+    settings.allowMultiPage = g_AllowMultiPage;
     settings.keepInputOrder = true;
 
     return settings;
@@ -980,7 +985,7 @@ int main(int, char**) {
                 previewName = g_SystemFonts[g_SelectedFontIndex].name;
             }
 
-            if (ImGui::BeginCombo("Font", previewName.c_str())) {
+            if (ImGui::BeginCombo("##FontSelector", previewName.c_str())) {
                 // Search input inside the combo
                 ImGui::SetNextItemWidth(-FLT_MIN);
                 if (ImGui::IsWindowAppearing()) {
@@ -1082,6 +1087,10 @@ int main(int, char**) {
                 }
                 ImGui::EndCombo();
             }
+            ImGui::SameLine();
+            FontInfoDialog::RenderButton(g_FontManager);
+            ImGui::SameLine();
+            ImGui::Text("Font");
 
             // Input Text - Always visible for Text Preview
             if (ImGui::InputText("Text", g_InputText, IM_ARRAYSIZE(g_InputText))) {
@@ -1641,11 +1650,9 @@ int main(int, char**) {
                 UpdatePreview(g_InputText);
             }
 
-            // Multi Page Toggle (Only if Auto)
-            if (g_AtlasWidth == 0 || g_AtlasHeight == 0) {
-                if (ImGui::Checkbox("Multi Page", &g_AllowMultiPage)) UpdatePreview(g_InputText);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Allow generating multiple texture pages if content doesn't fit.\nWarning: Not natively supported by some frameworks like Starling.");
-            }
+            // Multi Page Toggle (Always Available)
+            if (ImGui::Checkbox("Multi Page", &g_AllowMultiPage)) UpdatePreview(g_InputText);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Allow generating multiple texture pages if content doesn't fit.\nWarning: Not natively supported by some frameworks like Starling.");
 
             // Quality Settings
             const char* ssaaOptions[] = { "Standard (1x)", "High Quality (2x)", "Ultra Quality (4x)" };
@@ -1666,7 +1673,17 @@ int main(int, char**) {
             }
             
             // Preview Info
-            ImGui::Text("Dims: %d x %d", g_PreviewWidth, g_PreviewHeight);
+            if (!g_LastAtlas.pages.empty()) {
+                if (g_LastAtlas.pages.size() > 1) {
+                     // Show Per-Page dimensions and Count
+                     ImGui::Text("Dims: %d x %d (%d Pages)", g_LastAtlas.pages[0].width, g_LastAtlas.pages[0].height, (int)g_LastAtlas.pages.size());
+                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Total combined width for preview: %d px", g_PreviewWidth);
+                } else {
+                     ImGui::Text("Dims: %d x %d", g_LastAtlas.pages[0].width, g_LastAtlas.pages[0].height);
+                }
+            } else {
+                 ImGui::Text("Dims: -");
+            }
             
             ImGui::Separator();
             ImGui::Separator();
@@ -1674,6 +1691,7 @@ int main(int, char**) {
             if (ImGui::DragInt("xAdvance##Global", &g_GlobalXAdvance, 1, -100, 100)) UpdatePreview(g_InputText);
             if (ImGui::DragInt("xOffset##Global", &g_GlobalXOffset, 1, -100, 100)) UpdatePreview(g_InputText);
             if (ImGui::DragInt("yOffset##Global", &g_GlobalYOffset, 1, -100, 100)) UpdatePreview(g_InputText);
+            if (ImGui::Checkbox("Enable Kerning", &g_EnableKerning)) UpdatePreview(g_InputText);
 
             ImGui::Separator();
             ImGui::Text("Export Settings");
@@ -1992,6 +2010,8 @@ int main(int, char**) {
                              }
                              draw_list->AddText(textPos, IM_COL32(255, 255, 255, 255), pageLabel);
 
+
+
                              // Glyph Hover logic
                              ImVec2 mousePos = ImGui::GetMousePos();
                              if (ImGui::IsWindowHovered() &&
@@ -2048,6 +2068,34 @@ int main(int, char**) {
                         // Panning
                         if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
                             g_IsPanning = true;
+                        }
+                        
+                         // WARNING: Skipped Glyphs
+                        if (g_LastAtlas.skippedGlyphs > 0) {
+                             char warnMsg[64];
+                             sprintf(warnMsg, "WARNING: %d Glyphs Omitted (Space)", g_LastAtlas.skippedGlyphs);
+                             ImVec2 warnPos = ImVec2(p_min.x + 10, p_min.y + 10);
+                             
+                             // Background box
+                             ImVec2 txtSz = ImGui::CalcTextSize(warnMsg);
+                             draw_list->AddRectFilled(warnPos, ImVec2(warnPos.x + txtSz.x + 10, warnPos.y + txtSz.y + 10), IM_COL32(50, 0, 0, 200));
+                             draw_list->AddRect(warnPos, ImVec2(warnPos.x + txtSz.x + 10, warnPos.y + txtSz.y + 10), IM_COL32(255, 0, 0, 255));
+                             
+                             draw_list->AddText(ImVec2(warnPos.x + 5, warnPos.y + 5), IM_COL32(255, 200, 50, 255), warnMsg);
+
+                             // Warning Hover Tooltip
+                             ImVec2 mouseP = ImGui::GetMousePos();
+                             if (mouseP.x >= warnPos.x && mouseP.x <= warnPos.x + txtSz.x + 10 &&
+                                 mouseP.y >= warnPos.y && mouseP.y <= warnPos.y + txtSz.y + 10) 
+                             {
+                                 ImGui::BeginTooltip();
+                                 ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "Some characters did not fit in the texture!");
+                                 ImGui::Separator();
+                                 ImGui::Text("- Try increasing the Atlas Size (Width/Height).");
+                                 ImGui::Text("- Set Atlas Size to 'Auto' for automatic sizing.");
+                                 ImGui::Text("- Enable 'Multi Page' to allow multiple textures.");
+                                 ImGui::EndTooltip();
+                             }
                         }
                         if (g_IsPanning) {
                             if (!ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
@@ -2313,6 +2361,8 @@ int main(int, char**) {
             }
             ImGui::EndPopup();
         }
+
+        FontInfoDialog::RenderDialog(g_FontManager);
 
         ImGui::Render();
         int display_w, display_h;

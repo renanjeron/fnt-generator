@@ -42,6 +42,13 @@ struct AtlasResult {
     int base = 0; // Ascender
     
     std::string fontName; // Added for export
+
+    struct KerningPair {
+        uint32_t first;
+        uint32_t second;
+        int amount;
+    };
+    std::vector<KerningPair> kernings;
 };
 
 // --- Structures ---
@@ -111,6 +118,9 @@ struct AtlasSettings {
     
     // Sorting
     bool keepInputOrder = false;
+
+    // Kerning Control
+    bool enableKerning = true;
 };
 
 class TextureGenerator {
