@@ -117,7 +117,7 @@ GlyphBitmap FontManager::RenderGlyph(uint32_t charCode, FT_Int32 loadFlags) {
     return result;
 }
 
-GlyphBitmap FontManager::RenderGlyphStroke(uint32_t charCode, float strokeWidth, FT_Int32 loadFlags) {
+GlyphBitmap FontManager::RenderGlyphStroke(uint32_t charCode, float strokeWidth, FT_Stroker_LineJoin joinStyle, float miterLimit, FT_Int32 loadFlags) {
     std::lock_guard<std::mutex> lock(m_mutex);
     GlyphBitmap result = { {}, 0, 0, 0, 0, 0 };
 
@@ -138,8 +138,9 @@ GlyphBitmap FontManager::RenderGlyphStroke(uint32_t charCode, float strokeWidth,
     // Convert float pixels to 26.6 fixed point (radius)
     // For outside border, radius is thickness.
     FT_Fixed radius = (FT_Fixed)(strokeWidth * 64.0f);
+    FT_Fixed mLimit = (FT_Fixed)(miterLimit * 65536.0f);
     
-    FT_Stroker_Set(m_stroker, radius, FT_STROKER_LINECAP_ROUND, FT_STROKER_LINEJOIN_ROUND, 0);
+    FT_Stroker_Set(m_stroker, radius, FT_STROKER_LINECAP_ROUND, joinStyle, mLimit);
     
     // Stroke (using the more robust FT_Glyph_Stroke)
     if (FT_Glyph_Stroke(&glyph, m_stroker, 1)) {
@@ -206,7 +207,7 @@ bool FontManager::GetGlyphBounds(uint32_t charCode, GlyphBitmap& outMetrics, FT_
     return true;
 }
 
-bool FontManager::GetGlyphStrokeBounds(uint32_t charCode, float strokeWidth, GlyphBitmap& outMetrics, FT_Int32 loadFlags) {
+bool FontManager::GetGlyphStrokeBounds(uint32_t charCode, float strokeWidth, FT_Stroker_LineJoin joinStyle, float miterLimit, GlyphBitmap& outMetrics, FT_Int32 loadFlags) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (!m_face || !m_stroker) return false;
     
@@ -222,7 +223,8 @@ bool FontManager::GetGlyphStrokeBounds(uint32_t charCode, float strokeWidth, Gly
     if (FT_Get_Glyph(m_face->glyph, &glyph)) return false;
 
     FT_Fixed radius = (FT_Fixed)(strokeWidth * 64.0f);
-    FT_Stroker_Set(m_stroker, radius, FT_STROKER_LINECAP_ROUND, FT_STROKER_LINEJOIN_ROUND, 0);
+    FT_Fixed mLimit = (FT_Fixed)(miterLimit * 65536.0f);
+    FT_Stroker_Set(m_stroker, radius, FT_STROKER_LINECAP_ROUND, joinStyle, mLimit);
 
     // Stroke the glyph but no bitmap conversion yet
     if (FT_Glyph_Stroke(&glyph, m_stroker, 1)) {

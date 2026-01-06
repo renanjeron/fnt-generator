@@ -72,6 +72,8 @@ struct AtlasSettings {
     bool enableStroke = false;
     float strokeWidth = 0.0f;
     int strokePosition = 0; // 0=Outside, 1=Center, 2=Inside
+    int strokeJoinStyle = 1; // 0=Bevel, 1=Miter, 2=Round (Default 1=Miter)
+    float strokeMiterLimit = 2.0f;
     uint8_t strokeColor[4] = { 0, 0, 0, 255 }; // Solid stroke
     GradientData strokeGradient;
 

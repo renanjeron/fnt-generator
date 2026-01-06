@@ -47,7 +47,7 @@ public:
     GlyphBitmap RenderGlyph(uint32_t charCode, FT_Int32 loadFlags = FT_LOAD_RENDER | FT_LOAD_NO_HINTING);
     
     // Renders the stroke/outline of a glyph
-    GlyphBitmap RenderGlyphStroke(uint32_t charCode, float strokeWidth, FT_Int32 loadFlags = FT_LOAD_DEFAULT | FT_LOAD_NO_HINTING);
+    GlyphBitmap RenderGlyphStroke(uint32_t charCode, float strokeWidth, FT_Stroker_LineJoin joinStyle = FT_STROKER_LINEJOIN_ROUND, float miterLimit = 1.0f, FT_Int32 loadFlags = FT_LOAD_DEFAULT | FT_LOAD_NO_HINTING);
 
     // Helper to get kerning between two characters
     int GetKerning(uint32_t left, uint32_t right);
@@ -56,7 +56,8 @@ public:
     bool GetGlyphBounds(uint32_t charCode, GlyphBitmap& outMetrics, FT_Int32 loadFlags = FT_LOAD_DEFAULT | FT_LOAD_NO_BITMAP);
     
     // Get stroke metrics/bounds without rendering bitmap
-    bool GetGlyphStrokeBounds(uint32_t charCode, float strokeWidth, GlyphBitmap& outMetrics, FT_Int32 loadFlags = FT_LOAD_DEFAULT | FT_LOAD_NO_BITMAP);
+    // Get stroke metrics/bounds without rendering bitmap
+    bool GetGlyphStrokeBounds(uint32_t charCode, float strokeWidth, FT_Stroker_LineJoin joinStyle, float miterLimit, GlyphBitmap& outMetrics, FT_Int32 loadFlags = FT_LOAD_DEFAULT | FT_LOAD_NO_BITMAP);
     
     // Check if the font validates/contains a specific character code
     bool HasGlyph(uint32_t charCode) const;

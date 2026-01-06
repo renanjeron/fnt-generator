@@ -37,6 +37,7 @@
 #include "Utils/UIUtils.h"
 #include "Utils/FontPreviewUtils.h"
 #include "UI/FontInfoDialog.h"
+#include "UI/ExportDialog.h"
 
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE 0x812F
@@ -46,7 +47,7 @@
 
 // --- State Variables ---
 static std::vector<Utils::FontInfo> g_SystemFonts;
-static FontManager g_FontManager;
+FontManager g_FontManager;
 static int g_SelectedFontIndex = -1;
 static char g_InputText[1024] = "Hello Everyone";
 static int g_FontSize = 72;
@@ -74,6 +75,8 @@ static ImGG::GradientWidget g_StrokeGradientWidget;
 static int g_StrokeGradientType = 0;
 static float g_StrokeGradientAngle = 90.0f;
 static int g_StrokePosition = 0; // 0=Outside, 1=Center, 2=Inside
+static int g_StrokeJoinStyle = 1; // 0=Bevel, 1=Miter, 2=Round
+static float g_StrokeMiterLimit = 2.0f;
 
 // Shadow
 static bool g_EnableShadow = false;
@@ -123,18 +126,20 @@ static GLuint g_PatternPreviewTexture = 0;
 static char g_FontSearch[128] = ""; // Search filter
 // --- State Variables ---
 // ... (Previous variables)
-static float g_PreviewBgColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f }; // Default Transparent
-static char g_ExportFilename[128] = "my_font";
-static int g_ExportFormat = 0; // 0=XML, 1=Text, 2=Binary
+float g_PreviewBgColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f }; // UI Canvas Background
+float g_ExportBgColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };  // Exported File Background
+char g_ExportFilename[128] = "my_font";
+std::string g_ExportPath = "";
+int g_ExportFormat = 0; // 0=XML, 1=Text, 2=Binary
 static bool g_UseExtendedCharset = false;
 static bool g_UseCustomGlyphs = true; // Always true now
-static std::string g_CustomGlyphsText = "";
+std::string g_CustomGlyphsText = "";
 static std::vector<UnicodeBlock> g_UnicodeBlocks = UNICODE_BLOCKS; // Mutable copy
 static GLuint g_CheckerTexture = 0;
 // Atlas Interaction
-static std::set<uint32_t> g_ExcludedGlyphs;
-static int g_SSAAFactor = 1; // 1=None, 2=2x, 4=4x
-static int g_HintingMode = 0; // 0 = Smooth (No Hinting), 1 = Sharp (Auto), 2 = Crisp (Normal)
+std::set<uint32_t> g_ExcludedGlyphs;
+int g_SSAAFactor = 1; // 1=None, 2=2x, 4=4x
+int g_HintingMode = 0; // 0 = Smooth (No Hinting), 1 = Sharp (Auto), 2 = Crisp (Normal)
 static bool g_OpenPreferences = false;
 static int g_SelectedGlyphIndex = -1;
 static float g_AtlasZoom = 1.0f;
@@ -155,7 +160,7 @@ static int g_GlobalXAdvance = 0;
 static int g_GlobalXOffset = 0;
 static int g_GlobalYOffset = 0;
 // Kerning
-static bool g_EnableKerning = true;
+bool g_EnableKerning = true;
 
 // Favorite fonts system
 static std::set<std::string> g_FavoriteFonts;
@@ -172,6 +177,7 @@ void LoadStyle(const std::string& path);
 // Custom Knob Widget
 
 
+AtlasSettings ConstructSettings();
 void UpdatePreview(const char* text); // Forward checking
 
 // Header to update the UI texture for pattern preview (Defined here to avoid prototype issues)
@@ -231,6 +237,8 @@ static void SaveStyle(const std::string& path) {
     out << "  \"enableStroke\": " << (g_EnableStroke ? "true" : "false") << ",\n";
     out << "  \"strokeWidth\": " << g_StrokeWidth << ",\n";
     out << "  \"strokeColor\": [" << g_StrokeColor[0] << ", " << g_StrokeColor[1] << ", " << g_StrokeColor[2] << ", " << g_StrokeColor[3] << "],\n";
+    out << "  \"strokeJoinStyle\": " << g_StrokeJoinStyle << ",\n";
+    out << "  \"strokeMiterLimit\": " << g_StrokeMiterLimit << ",\n";
     
     out << "  \"enableStrokeGradient\": " << (g_EnableStrokeGradient ? "true" : "false") << ",\n";
     out << "  \"strokeGradientType\": " << g_StrokeGradientType << ",\n";
@@ -289,6 +297,14 @@ static void SaveStyle(const std::string& path) {
     out << "  \"patternMappingMode\": " << g_PatternMappingMode << ",\n";
 
     out << "  \"exportFilename\": \"" << g_ExportFilename << "\",\n";
+    {
+        std::string escaped;
+        for(char c : g_ExportPath) {
+            if(c == '\\') escaped += "\\\\";
+            else escaped += c;
+        }
+        out << "  \"exportPath\": \"" << escaped << "\",\n";
+    }
     out << "  \"ssaaFactor\": " << g_SSAAFactor << ",\n";
     out << "  \"hintingMode\": " << g_HintingMode << ",\n";
     
@@ -371,6 +387,8 @@ void LoadStyle(const std::string& path) {
     g_EnableStroke = Utils::ParseBoolValue(c, "enableStroke", false);
     g_StrokeWidth = Utils::ParseFloatValue(c, "strokeWidth", 2.0f);
     Utils::ParseColor4(c, "strokeColor", g_StrokeColor);
+    g_StrokeJoinStyle = Utils::ParseIntValue(c, "strokeJoinStyle", 1);
+    g_StrokeMiterLimit = Utils::ParseFloatValue(c, "strokeMiterLimit", 2.0f);
     
     g_EnableStrokeGradient = Utils::ParseBoolValue(c, "enableStrokeGradient", false);
     g_StrokeGradientType = Utils::ParseIntValue(c, "strokeGradientType", 0);
@@ -496,6 +514,7 @@ void LoadStyle(const std::string& path) {
     if(!fname.empty()) strncpy(g_ExportFilename, fname.c_str(), sizeof(g_ExportFilename));
     
     g_SSAAFactor = Utils::ParseIntValue(c, "ssaaFactor", 1);
+    g_ExportPath = Utils::ParseStringValue(c, "exportPath");
     // Legacy support for old boolean previewSSAA
     if (c.find("\"previewSSAA\": true") != std::string::npos) g_SSAAFactor = 2;
 
@@ -576,11 +595,11 @@ static std::vector<GLuint> g_PreviewTextures;
 static GLuint g_TextPreviewTexture = 0; // New: Text Line Preview
 static int g_PreviewWidth = 0;
 static int g_PreviewHeight = 0;
-static AtlasResult g_LastAtlas;
+AtlasResult g_LastAtlas;
 static AtlasResult g_LastTextPreview; // New
-static std::string g_StatusMessage = "";
-static double g_StatusTime = 0.0;
-static bool g_StatusIsError = false; // Track if status is error or success
+std::string g_StatusMessage = "";
+double g_StatusTime = 0.0;
+bool g_StatusIsError = false; 
 
 // ... (UpdatePreview remains same) ...
 AtlasSettings ConstructSettings() {
@@ -618,6 +637,8 @@ AtlasSettings ConstructSettings() {
     settings.enableStroke = g_EnableStroke;
     settings.strokeWidth = g_StrokeWidth;
     settings.strokePosition = g_StrokePosition;
+    settings.strokeJoinStyle = g_StrokeJoinStyle;
+    settings.strokeMiterLimit = g_StrokeMiterLimit;
     settings.strokeColor[0] = (uint8_t)(g_StrokeColor[0] * 255);
     settings.strokeColor[1] = (uint8_t)(g_StrokeColor[1] * 255);
     settings.strokeColor[2] = (uint8_t)(g_StrokeColor[2] * 255);
@@ -928,6 +949,10 @@ int main(int, char**) {
                          SaveStyle(file);
                          Utils::AddRecentStyle(g_RecentStyles, file);
                      }
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Export Font")) {
+                    ExportDialog::Open();
                 }
                 
                 ImGui::Separator();
@@ -1356,6 +1381,10 @@ int main(int, char**) {
             if (g_EnableStroke && openStroke) {
                 if (ImGui::SliderFloat("Width", &g_StrokeWidth, 0.0f, 10.0f)) UpdatePreview(g_InputText);
                 if (ImGui::Combo("Position##Stroke", &g_StrokePosition, "Outside\0Center\0Inside\0")) UpdatePreview(g_InputText);
+                if (ImGui::Combo("Join style##Stroke", &g_StrokeJoinStyle, "bevel\0miter\0round\0")) UpdatePreview(g_InputText);
+                if (g_StrokeJoinStyle == 1) { // Miter
+                    if (ImGui::SliderFloat("Miter limit##Stroke", &g_StrokeMiterLimit, 1.0f, 10.0f)) UpdatePreview(g_InputText);
+                }
                 if (ImGui::Checkbox("Stroke Gradient", &g_EnableStrokeGradient)) UpdatePreview(g_InputText);
                     
                 if (!g_EnableStrokeGradient) {
@@ -1672,6 +1701,18 @@ int main(int, char**) {
                 UpdatePreview(g_InputText);
             }
             
+            // Canvas Preview Background
+            ImGui::Separator();
+            ImGui::Text("Canvas Background");
+            bool canvasTransparent = (g_PreviewBgColor[3] == 0.0f);
+            if (ImGui::Checkbox("Transparent Canvas", &canvasTransparent)) {
+                g_PreviewBgColor[3] = canvasTransparent ? 0.0f : 1.0f;
+            }
+            if (!canvasTransparent) {
+                ImGui::ColorEdit3("Canvas Color", g_PreviewBgColor);
+                g_PreviewBgColor[3] = 1.0f;
+            }
+            
             // Preview Info
             if (!g_LastAtlas.pages.empty()) {
                 if (g_LastAtlas.pages.size() > 1) {
@@ -1694,91 +1735,8 @@ int main(int, char**) {
             if (ImGui::Checkbox("Enable Kerning", &g_EnableKerning)) UpdatePreview(g_InputText);
 
             ImGui::Separator();
-            ImGui::Text("Export Settings");
             
-            ImGui::Text("Format:");
-            const char* formats[] = { ".fnt (BMFont XML)", ".fnt (BMFont Text)", ".xml (BMFont XML)", ".txt (BMFont Text)", ".fnt (BMFont Binary)" };
-            ImGui::Combo("##Format", &g_ExportFormat, formats, IM_ARRAYSIZE(formats));
-            
-            ImGui::InputText("Filename", g_ExportFilename, IM_ARRAYSIZE(g_ExportFilename));
-            
-            // Background Control
-            static bool bgTransparent = true;
-            if (ImGui::Checkbox("Transparent BG", &bgTransparent)) {
-                 // Logic handled in drawing
-            }
-            if (!bgTransparent) {
-                ImGui::ColorEdit3("Preview BG", g_PreviewBgColor);
-                // Ensure Alpha is 1.0
-                g_PreviewBgColor[3] = 1.0f; 
-            } else {
-                g_PreviewBgColor[3] = 0.0f; // Transparent
-            }
-
-            // Export
-            if (ImGui::Button("Export (Select Folder)", ImVec2(-1, 40))) {
-                if (!g_LastAtlas.pages.empty()) {
-                    std::string folder = Utils::PickFolderDialog();
-                    if (!folder.empty()) {
-                         g_StatusMessage = "Generating High Quality Atlas...";
-                         
-                         AtlasSettings hqSettings = ConstructSettings();
-                         hqSettings.hintingMode = g_HintingMode;
-
-                          // Re-generate charset logic
-                           std::vector<uint32_t> charset = Utils::DecodeUtf8(g_CustomGlyphsText.c_str());
-                          std::sort(charset.begin(), charset.end());
-                          charset.erase(std::unique(charset.begin(), charset.end()), charset.end());
-
-                         if(charset.empty()) { for(uint32_t c=0x20; c<=0x7E; c++) charset.push_back(c); }
-                         
-                         if (!g_ExcludedGlyphs.empty()) {
-                            std::vector<uint32_t> filtered;
-                            for (uint32_t c : charset) if (g_ExcludedGlyphs.find(c) == g_ExcludedGlyphs.end()) filtered.push_back(c);
-                            charset = filtered;
-                         }
-
-                         AtlasResult hqAtlas = TextureGenerator::GenerateAtlas(g_FontManager, charset, hqSettings);
-
-                         if (!hqAtlas.hasErrors && !hqAtlas.pages.empty()) {
-                            std::string fname = (std::string(g_ExportFilename).empty()) ? "font_export" : std::string(g_ExportFilename);
-                            
-                             int formatEnum = 0; // Default XML
-                             std::string ext = ".fnt";
-                             switch(g_ExportFormat) {
-                                 case 0: formatEnum = 0; ext = ".fnt"; break; // XML
-                                 case 1: formatEnum = 1; ext = ".fnt"; break; // Text
-                                 case 2: formatEnum = 0; ext = ".xml"; break; // XML
-                                 case 3: formatEnum = 1; ext = ".txt"; break; // Text
-                                 case 4: formatEnum = 2; ext = ".fnt"; break; // Binary
-                             }
-
-                            if (Exporter::ExportAtlasToDisk(hqAtlas, folder, fname, formatEnum, ext)) {
-                                 g_StatusMessage = "Export Success (HQ)!";
-                                 g_StatusTime = ImGui::GetTime();
-                                 g_StatusIsError = false;
-                                 
-                                 // Optional: Update preview with the HQ version
-                                 g_LastAtlas = hqAtlas;
-                                 UpdateAtlasTextures(); // Re-use the existing function to update textures correctly
-                                 
-                            } else {
-                                 g_StatusMessage = "Export Failed!";
-                                 g_StatusTime = ImGui::GetTime();
-                                 g_StatusIsError = true;
-                            }
-                         } else {
-                            g_StatusMessage = hqAtlas.errorMessage.empty() ? "Generation Failed" : hqAtlas.errorMessage;
-                            g_StatusTime = ImGui::GetTime();
-                            g_StatusIsError = true;
-                         }
-                    }
-                } else {
-                    g_StatusMessage = "Nothing to export!";
-                    g_StatusTime = ImGui::GetTime();
-                    g_StatusIsError = true;
-                }
-            }
+            ExportDialog::RenderButton();
             
             if (ImGui::GetTime() - g_StatusTime < 5.0) {
                 ImVec4 color = g_StatusIsError ? ImVec4(1.0f, 0.3f, 0.3f, 1.0f) : ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
@@ -1830,9 +1788,9 @@ int main(int, char**) {
                     ImGui::PushClipRect(p_min, p_max, true);
 
                     // BG Checkered
-                    if (bgTransparent && g_CheckerTexture) {
+                    if (g_PreviewBgColor[3] == 0.0f && g_CheckerTexture) {
                          draw_list->AddImage((void*)(intptr_t)g_CheckerTexture, p_min, p_max, ImVec2(0,0), ImVec2(canvas_sz.x / 32.0f, canvas_sz.y / 32.0f));
-                    } else if (!bgTransparent) {
+                    } else if (g_PreviewBgColor[3] != 0.0f) {
                          draw_list->AddRectFilled(p_min, p_max, ImColor(g_PreviewBgColor[0], g_PreviewBgColor[1], g_PreviewBgColor[2], 1.0f));
                     }
 
@@ -1911,9 +1869,9 @@ int main(int, char**) {
                     ImGui::PushClipRect(p_min, p_max, true);
 
                     // BG Checkered
-                    if (bgTransparent && g_CheckerTexture) {
+                    if (g_PreviewBgColor[3] == 0.0f && g_CheckerTexture) {
                          draw_list->AddImage((void*)(intptr_t)g_CheckerTexture, p_min, p_max, ImVec2(0,0), ImVec2(canvas_sz.x / 32.0f, canvas_sz.y / 32.0f));
-                    } else if (!bgTransparent) {
+                    } else if (g_PreviewBgColor[3] != 0.0f) {
                          draw_list->AddRectFilled(p_min, p_max, ImColor(g_PreviewBgColor[0], g_PreviewBgColor[1], g_PreviewBgColor[2], 1.0f));
                     }
 
@@ -2362,6 +2320,8 @@ int main(int, char**) {
             ImGui::EndPopup();
         }
 
+        ExportDialog::RenderDialog();
+        ExportDialog::RenderSuccessNotification();
         FontInfoDialog::RenderDialog(g_FontManager);
 
         ImGui::Render();

@@ -202,7 +202,7 @@ static void WriteBinary(const AtlasResult& atlas, const std::string& folder, con
     }
 }
 
-bool Exporter::ExportAtlasToDisk(const AtlasResult& atlas, const std::string& destinationFolder, const std::string& fileNameBase, int format, const std::string& extension) {
+bool Exporter::ExportAtlasToDisk(const AtlasResult& atlas, const std::string& destinationFolder, const std::string& fileNameBase, int format, const std::string& extension, const uint8_t* backgroundColor) {
     std::filesystem::path folder(destinationFolder);
     if (!std::filesystem::exists(folder)) {
         return false;
@@ -223,9 +223,6 @@ bool Exporter::ExportAtlasToDisk(const AtlasResult& atlas, const std::string& de
         
         std::filesystem::path pngPath = folder / pngName;
         
-        // If we have pages, use them. If not (error?), assume handle gracefull?
-        // AtlasResult should always have at least 1 page if successful, or maybe 0 if empty text?
-        // If empty, creating 1x1 dummy?
         if (i < (int)atlas.pages.size()) {
             const auto& p = atlas.pages[i];
             
@@ -233,8 +230,6 @@ bool Exporter::ExportAtlasToDisk(const AtlasResult& atlas, const std::string& de
             int exportW = p.width;
             int exportH = p.height;
             
-            // If this is the first page and we have a logical size limit smaller than physical, crop it
-            // This handles the "Force Grow" preview case where we want the export to be strictly the requested size
             if (i == 0 && atlas.atlasWidth > 0 && atlas.atlasWidth < p.width) {
                 exportW = atlas.atlasWidth;
             }
@@ -242,7 +237,41 @@ bool Exporter::ExportAtlasToDisk(const AtlasResult& atlas, const std::string& de
                 exportH = atlas.atlasHeight;
             }
 
-            if (!stbi_write_png(pngPath.string().c_str(), exportW, exportH, 4, p.pixels.data(), p.width * 4)) {
+            // Compositing logic
+            const uint8_t* finalPixels = p.pixels.data();
+            std::vector<uint8_t> compositeBuffer;
+
+            if (backgroundColor && backgroundColor[3] > 0) {
+                compositeBuffer.resize(p.pixels.size());
+                float bgR = backgroundColor[0] / 255.0f;
+                float bgG = backgroundColor[1] / 255.0f;
+                float bgB = backgroundColor[2] / 255.0f;
+                float bgA = backgroundColor[3] / 255.0f;
+
+                for (size_t j = 0; j < p.pixels.size(); j += 4) {
+                    float srcR = p.pixels[j + 0] / 255.0f;
+                    float srcG = p.pixels[j + 1] / 255.0f;
+                    float srcB = p.pixels[j + 2] / 255.0f;
+                    float srcA = p.pixels[j + 3] / 255.0f;
+
+                    // Standard alpha blending (Source Over Destination)
+                    float outA = srcA + bgA * (1.0f - srcA);
+                    if (outA > 1e-6f) {
+                        compositeBuffer[j + 0] = (uint8_t)(((srcR * srcA) + (bgR * bgA * (1.0f - srcA))) / outA * 255.0f);
+                        compositeBuffer[j + 1] = (uint8_t)(((srcG * srcA) + (bgG * bgA * (1.0f - srcA))) / outA * 255.0f);
+                        compositeBuffer[j + 2] = (uint8_t)(((srcB * srcA) + (bgB * bgA * (1.0f - srcA))) / outA * 255.0f);
+                        compositeBuffer[j + 3] = (uint8_t)(outA * 255.0f);
+                    } else {
+                        compositeBuffer[j + 0] = 0;
+                        compositeBuffer[j + 1] = 0;
+                        compositeBuffer[j + 2] = 0;
+                        compositeBuffer[j + 3] = 0;
+                    }
+                }
+                finalPixels = compositeBuffer.data();
+            }
+
+            if (!stbi_write_png(pngPath.string().c_str(), exportW, exportH, 4, finalPixels, p.width * 4)) {
                 std::cerr << "Failed to write PNG to " << pngPath << std::endl;
                 return false;
             }

@@ -10,6 +10,13 @@
 #include "Utils/StringUtils.h"
 #include <set>
 
+static FT_Stroker_LineJoin GetFTJoinStyle(int style) {
+    if (style == 0) return FT_STROKER_LINEJOIN_BEVEL;
+    if (style == 1) return FT_STROKER_LINEJOIN_MITER;
+    if (style == 2) return FT_STROKER_LINEJOIN_ROUND;
+    return FT_STROKER_LINEJOIN_ROUND;
+}
+
 // Wrapper
 AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std::string& text, const AtlasSettings& settings) {
     // Decode UTF-8 correctly
@@ -197,7 +204,7 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
         if (settings.enableStroke && settings.strokeWidth > 0) {
             float effWidth = settings.strokeWidth;
             if (settings.strokePosition == 1) effWidth *= 0.5f; // Center
-            if (!fontManager.GetGlyphStrokeBounds(code, effWidth, rc.outline, flags)) {
+            if (!fontManager.GetGlyphStrokeBounds(code, effWidth, GetFTJoinStyle(settings.strokeJoinStyle), settings.strokeMiterLimit, rc.outline, flags)) {
                 rc.outline = rc.body; // Fallback
             }
         } else {
@@ -585,7 +592,7 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
                     if (settings.enableStroke && settings.strokeWidth > 0) {
                         float effWidth = settings.strokeWidth;
                         if (settings.strokePosition == 1) effWidth *= 0.5f; 
-                        outline = fontManager.RenderGlyphStroke(rcCoords.code, effWidth, flags);
+                        outline = fontManager.RenderGlyphStroke(rcCoords.code, effWidth, GetFTJoinStyle(settings.strokeJoinStyle), settings.strokeMiterLimit, flags);
                     } else {
                         outline = body; 
                     }
@@ -816,7 +823,7 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
         rc.body = fontManager.RenderGlyph(rc.code, flags);
         
         if (settings.enableStroke && settings.strokeWidth > 0) {
-            rc.outline = fontManager.RenderGlyphStroke(rc.code, settings.strokeWidth, flags);
+            rc.outline = fontManager.RenderGlyphStroke(rc.code, settings.strokeWidth, GetFTJoinStyle(settings.strokeJoinStyle), settings.strokeMiterLimit, flags);
             rc.width = rc.outline.width;
             rc.height = rc.outline.height;
             rc.bearingY = rc.outline.bearingY; 
