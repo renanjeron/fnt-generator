@@ -1740,6 +1740,11 @@ int main(int, char**) {
                 UpdatePreview(g_InputText);
             }
 
+            if (ImGui::DragInt("Atlas Padding", &g_Padding, 0.5f, 0, 100)) {
+                UpdatePreview(g_InputText);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spacing between glyphs in the atlas texture to prevent bleeding.");
+
             // Multi Page Toggle (Always Available)
             if (ImGui::Checkbox("Multi Page", &g_AllowMultiPage)) UpdatePreview(g_InputText);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Allow generating multiple texture pages if content doesn't fit.\nWarning: Not natively supported by some frameworks like Starling.");
