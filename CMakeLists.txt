@@ -105,8 +105,7 @@ if(WIN32)
     list(APPEND PLATFORM_SOURCES src/Utils/PlatformUtils_Win32.cpp res/icon.rc)
 elseif(APPLE)
     list(APPEND PLATFORM_SOURCES src/Utils/PlatformUtils_macOS.mm)
-    set(MACOS_ICON res/icon.icns)
-    set_source_files_properties(${MACOS_ICON} PROPERTIES MACOSX_BUNDLE_RESOURCE TRUE)
+    set(MACOS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/res/icon.icns")
 else()
     list(APPEND PLATFORM_SOURCES src/Utils/PlatformUtils_Linux.cpp)
 endif()
@@ -179,7 +178,8 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
         MACOSX_BUNDLE_COPYRIGHT "Copyright © 2026"
-        MACOSX_BUNDLE_ICON_FILE "icon.icns"
+        MACOSX_BUNDLE_ICON_FILE "icon"
+        RESOURCE "${MACOS_ICON}"
     )
 endif()
 

@@ -74,9 +74,11 @@ jobs:
       # macOS: Zip the .app Bundle
       - name: Package macOS
         if: runner.os == 'macOS'
-        run: |
+        run: |          
+          mkdir -p build/FntGenerator.app/Contents/MacOS/res
+          cp -r res/* build/FntGenerator.app/Contents/MacOS/res/
           cd build
-          zip -r ../${{ matrix.asset_name }} FntGenerator.app ../res
+          zip -ry ../${{ matrix.asset_name }} FntGenerator.app
 
       # Linux: Tar the Executable
       - name: Package Linux

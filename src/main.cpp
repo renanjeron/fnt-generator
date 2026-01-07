@@ -874,23 +874,45 @@ int main(int, char**) {
     builder.AddText("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{}|;:',.<>/?`~"); // Ensure basics
     builder.BuildRanges(&ranges);
 
-    // Try to load a font that covers most of these (Microsoft YaHei is good for CJK on Windows)
-    // Fallback order: Microsoft YaHei -> Arial -> Default
+    // Fallback order: res/ui_font.ttf -> System Specific (YaHei/PingFang/Arial) -> Default
     bool fontLoaded = false;
     
-    #ifdef _WIN32
-    const char* fontPath = "C:\\Windows\\Fonts\\msyh.ttc"; // Microsoft YaHei
-    if (std::filesystem::exists(fontPath)) {
-        io.Fonts->AddFontFromFileTTF(fontPath, 18.0f, NULL, ranges.Data);
-        fontLoaded = true;
-    } else {
-        fontPath = "C:\\Windows\\Fonts\\Arial.ttf";
-        if (std::filesystem::exists(fontPath)) {
-            io.Fonts->AddFontFromFileTTF(fontPath, 18.0f, NULL, ranges.Data);
+    // 1. Try bundled font first (for consistency across platforms)
+    std::string bundledFontSelf = Utils::GetExecutablePath() + "/res/ui_font.ttf";
+    std::string bundledFontPath = "";
+    if (std::filesystem::exists(bundledFontSelf)) {
+        bundledFontPath = bundledFontSelf;
+    } else if (std::filesystem::exists("res/ui_font.ttf")) {
+        bundledFontPath = "res/ui_font.ttf";
+    }
+
+    if (!bundledFontPath.empty()) {
+        if (io.Fonts->AddFontFromFileTTF(bundledFontPath.c_str(), 18.0f, NULL, ranges.Data)) {
             fontLoaded = true;
         }
     }
-    #endif
+
+    if (!fontLoaded) {
+        #ifdef _WIN32
+        const char* winFont = "C:\\Windows\\Fonts\\msyh.ttc";
+        if (std::filesystem::exists(winFont)) {
+            io.Fonts->AddFontFromFileTTF(winFont, 18.0f, NULL, ranges.Data);
+            fontLoaded = true;
+        } else {
+            winFont = "C:\\Windows\\Fonts\\Arial.ttf";
+            if (std::filesystem::exists(winFont)) {
+                io.Fonts->AddFontFromFileTTF(winFont, 18.0f, NULL, ranges.Data);
+                fontLoaded = true;
+            }
+        }
+        #elif defined(__APPLE__)
+        const char* macFont = "/System/Library/Fonts/PingFang.ttc";
+        if (std::filesystem::exists(macFont)) {
+            io.Fonts->AddFontFromFileTTF(macFont, 18.0f, NULL, ranges.Data);
+            fontLoaded = true;
+        }
+        #endif
+    }
 
     if (!fontLoaded) {
         io.Fonts->AddFontDefault(); 
