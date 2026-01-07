@@ -30,7 +30,8 @@ namespace FontInfoDialog {
     }
 
     void RenderButton(const FontManager& fontManager) {
-         if (ImGui::Button(" i ")) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0,0,0,0)); 
+        if (ImGui::Button("##InfoBtn", ImVec2(18, 18))) {
              g_CachedMetadata = fontManager.GetMetadata();
              
              // Add File Path manually if not empty
@@ -58,9 +59,29 @@ namespace FontInfoDialog {
 
              g_RequestOpen = true; 
         }
+        ImGui::PopStyleColor();
+
         if (ImGui::IsItemHovered()) {
              ImGui::SetTooltip("View Font Information");
         }
+
+        // Draw 'i' icon
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        ImVec2 p_min = ImGui::GetItemRectMin();
+        ImVec2 p_max = ImGui::GetItemRectMax();
+        ImVec2 center = ImVec2((float)(int)((p_min.x + p_max.x) * 0.5f), (float)(int)((p_min.y + p_max.y) * 0.5f));
+        
+        ImU32 iconColor = ImGui::GetColorU32(ImGuiCol_Text);
+        if (ImGui::IsItemHovered()) iconColor = ImGui::GetColorU32(ImGuiCol_TextSelectedBg);
+
+        // Circle outline
+        draw_list->AddCircle(center, 7.0f, iconColor, 0, 1.5f);
+        
+        // 'i' body (Rect for sharpness)
+        draw_list->AddRectFilled(ImVec2(center.x - 1, center.y), ImVec2(center.x + 1, center.y + 4), iconColor);
+        
+        // 'i' dot (Circle)
+        draw_list->AddCircleFilled(ImVec2(center.x, center.y - 3.0f), 1.5f, iconColor);
     }
 
     void RenderDialog(const FontManager& fontManager) {

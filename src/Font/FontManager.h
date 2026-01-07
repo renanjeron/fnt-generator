@@ -33,8 +33,12 @@ public:
     bool Initialize();
     void Shutdown();
 
-    // Loads a font face from file path
+    // Loads a primary font face from file path
     bool LoadFont(const std::string& path);
+
+    // Loads a fallback font face
+    bool LoadFallbackFont(const std::string& path);
+    void ClearFallbackFont();
 
     // Sets the pixel size for the current font
     void SetSize(int size);
@@ -62,13 +66,15 @@ public:
     // Check if the font validates/contains a specific character code
     bool HasGlyph(uint32_t charCode) const;
 
+    // Check if a font is currently loaded
+    bool IsLoaded() const { return m_face != nullptr; }
+    bool IsFallbackLoaded() const { return m_fallbackFace != nullptr; }
+
     // Check if the font has kerning information (legacy kern table)
     bool HasKerning() const;
 
-    // Check if a font is currently loaded
-    bool IsLoaded() const { return m_face != nullptr; }
-
     std::string GetFilePath() const { return m_currentPath; }
+    std::string GetFallbackFilePath() const { return m_fallbackPath; }
     
     // Check if the font has all glyphs in the list
     bool HasGlyphs(const std::vector<uint32_t>& charCodes) const;
@@ -84,8 +90,10 @@ public:
 private:
     FT_Library m_library = nullptr;
     FT_Face m_face = nullptr;
+    FT_Face m_fallbackFace = nullptr;
     FT_Stroker m_stroker = nullptr;
     int m_currentSize = 24;
     std::string m_currentPath = "";
-    mutable std::mutex m_mutex;
+    std::string m_fallbackPath = "";
+    mutable std::recursive_mutex m_mutex;
 };

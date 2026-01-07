@@ -38,6 +38,7 @@
 #include "Utils/FontPreviewUtils.h"
 #include "UI/FontInfoDialog.h"
 #include "UI/ExportDialog.h"
+#include "UI/FontSelector.h"
 
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE 0x812F
@@ -110,7 +111,7 @@ static int g_InnerGlowBlendMode = 0; // 0 = Normal
 static bool g_EnablePattern = false;
 
 // Font Preview
-static bool g_ShowFontPreview = false;
+static bool g_ShowFontPreview = true;
 static std::string g_PatternPath = "";
 static std::vector<PatImage> g_LoadedPatterns;
 static bool g_ShowPatternSelector = false;
@@ -128,8 +129,9 @@ static bool g_RequestPatternPopup = false;
 static GLuint g_PatternPreviewTexture = 0;
 
 static char g_FontSearch[128] = ""; // Search filter
+static int g_SelectedFallbackFontIndex = -1;
+static char g_FallbackFontSearch[128] = "";
 // --- State Variables ---
-// ... (Previous variables)
 float g_PreviewBgColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f }; // UI Canvas Background
 float g_ExportBgColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };  // Exported File Background
 char g_ExportFilename[128] = "my_font";
@@ -345,6 +347,17 @@ static void SaveStyle(const std::string& path) {
         }
         out << "  \"fontPath\": \"" << escaped << "\",\n";
     }
+
+    // Fallback Font Path
+    if (g_SelectedFallbackFontIndex >= 0 && g_SelectedFallbackFontIndex < (int)g_SystemFonts.size()) {
+        std::string ffp = g_SystemFonts[g_SelectedFallbackFontIndex].path;
+        std::string ffescaped;
+        for(char c : ffp) {
+            if(c == '\\') ffescaped += "\\\\";
+            else ffescaped += c;
+        }
+        out << "  \"fallbackFontPath\": \"" << ffescaped << "\",\n";
+    }
     
     // Excluded Glyphs
     out << "  \"excludedGlyphs\": [";
@@ -554,6 +567,20 @@ void LoadStyle(const std::string& path) {
             if(g_SystemFonts[i].path == fp) {
                 g_SelectedFontIndex = (int)i;
                 g_FontManager.LoadFont(fp);
+                break;
+            }
+        }
+    }
+
+    // Fallback Font Path
+    std::string fbfp = Utils::ParseStringValue(c, "fallbackFontPath");
+    g_SelectedFallbackFontIndex = -1;
+    g_FontManager.ClearFallbackFont();
+    if(!fbfp.empty()) {
+        for(size_t i=0; i<g_SystemFonts.size(); i++) {
+            if(g_SystemFonts[i].path == fbfp) {
+                g_SelectedFallbackFontIndex = (int)i;
+                g_FontManager.LoadFallbackFont(fbfp);
                 break;
             }
         }
@@ -1061,118 +1088,28 @@ int main(int, char**) {
             ImGui::Separator();
 
 
-            // Font Selector with integrated search and favorites
-            std::string previewName = "Select Font...";
-            if (g_SelectedFontIndex >= 0 && g_SelectedFontIndex < g_SystemFonts.size()) {
-                previewName = g_SystemFonts[g_SelectedFontIndex].name;
+            auto onUpdate = [&]() { UpdatePreview(g_InputText); };
+            auto onFav = [&](const std::string& p) { ToggleFavorite(p); };
+
+            ImGui::Text("Font:");
+            if (g_SelectedFontIndex >= 0) {
+                ImGui::SameLine();
+                FontInfoDialog::RenderButton(g_FontManager);
             }
+            
+            UI::RenderFontSelector("##Font", "##FontSelector", g_SelectedFontIndex, g_SystemFonts, g_FavoriteFonts, 
+                g_FontSearch, IM_ARRAYSIZE(g_FontSearch), g_FontManager, false, g_ShowFontPreview, 
+                onUpdate, onFav);
+            
+            ImGui::Spacing();
 
-            if (ImGui::BeginCombo("##FontSelector", previewName.c_str())) {
-                // Search input inside the combo
-                ImGui::SetNextItemWidth(-FLT_MIN);
-                if (ImGui::IsWindowAppearing()) {
-                    ImGui::SetKeyboardFocusHere();
-                }
-                ImGui::InputTextWithHint("##FontSearch", "Search...", g_FontSearch, IM_ARRAYSIZE(g_FontSearch));
-                
-                ImGui::Separator();
-                
-                // Create sorted list: favorites first, then alphabetical
-                std::vector<int> sortedIndices;
-                for (int i = 0; i < g_SystemFonts.size(); i++) {
-                    sortedIndices.push_back(i);
-                }
-                
-                std::sort(sortedIndices.begin(), sortedIndices.end(), [](int a, int b) {
-                    bool aFav = IsFavorite(g_SystemFonts[a].path);
-                    bool bFav = IsFavorite(g_SystemFonts[b].path);
-                    if (aFav != bFav) return aFav; // Favorites first
-                    return g_SystemFonts[a].name < g_SystemFonts[b].name; // Then alphabetical
-                });
-                
-                // Scrollable list of filtered fonts
-                for (int idx : sortedIndices) {
-                    // Filter logic
-                    if (g_FontSearch[0] != '\0' && !Utils::StringContains(g_SystemFonts[idx].name, g_FontSearch)) {
-                        continue;
-                    }
-                    
-                    bool isFav = IsFavorite(g_SystemFonts[idx].path);
-                    
-                    // Star button
-                    ImGui::PushID(idx);
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0,0,0,0));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0,0,0,0));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0,0,0,0));
-                    
-                    if (ImGui::Button("##FavBtn", ImVec2(18, 18))) {
-                        ToggleFavorite(g_SystemFonts[idx].path);
-                    }
-                    ImGui::PopStyleColor(3);
-                    
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip(isFav ? "Remove from Favorites" : "Add to Favorites");
-
-                    // Draw Star
-                    ImDrawList* draw_list = ImGui::GetWindowDrawList();
-                    ImVec2 p_min = ImGui::GetItemRectMin();
-                    ImVec2 p_max = ImGui::GetItemRectMax();
-                    ImVec2 center = ImVec2((p_min.x + p_max.x) * 0.5f, (p_min.y + p_max.y) * 0.5f);
-                    float radius = 7.0f;
-
-                    ImU32 starColor = isFav ? IM_COL32(255, 215, 0, 255) : IM_COL32(100, 100, 100, 150);
-                    if (ImGui::IsItemHovered()) starColor = isFav ? IM_COL32(255, 230, 50, 255) : IM_COL32(180, 180, 180, 255);
-
-                    ImVec2 starPoints[10];
-                    for(int k=0; k<10; k++) {
-                         float a = (k * 36.0f - 90.0f) * 3.14159f / 180.0f;
-                         float r = (k % 2 == 0) ? radius : radius * 0.45f;
-                         starPoints[k] = ImVec2(center.x + cosf(a) * r, center.y + sinf(a) * r);
-                    }
-
-                    if (isFav) {
-                        for(int k=0; k<10; k++) {
-                            draw_list->AddTriangleFilled(center, starPoints[k], starPoints[(k+1)%10], starColor);
-                        }
-                    }
-                    else draw_list->AddPolyline(starPoints, 10, starColor, true, 1.5f);
-
-                    ImGui::PopID();
-                    
-                    ImGui::SameLine();
-                    
-                    // Highlight favorite fonts in the list
-                    if (isFav) {
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.8f, 1.0f)); // Slight yellow tint
-                    }
-                    
-                    if (g_ShowFontPreview) {
-                        GLuint tex = Utils::GenerateFontPreview(g_SystemFonts[idx].path);
-                        if (tex != 0) {
-                            ImGui::Image((void*)(intptr_t)tex, ImVec2(40, 20), ImVec2(0,0), ImVec2(1,1), ImVec4(1,1,1,1), ImVec4(1,1,1,0.0f));
-                            ImGui::SameLine();
-                        }
-                    }
-                    
-                    bool is_selected = (g_SelectedFontIndex == idx);
-                    if (ImGui::Selectable(g_SystemFonts[idx].name.c_str(), is_selected)) {
-                        g_SelectedFontIndex = idx;
-                        g_FontManager.LoadFont(g_SystemFonts[idx].path);
-                        UpdatePreview(g_InputText);
-                        // Clear search when selecting
-                        g_FontSearch[0] = '\0';
-                    }
-                    if (is_selected) ImGui::SetItemDefaultFocus();
-                    
-                    if (isFav) {
-                        ImGui::PopStyleColor();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-            ImGui::SameLine();
-            FontInfoDialog::RenderButton(g_FontManager);
-            ImGui::SameLine();
-            ImGui::Text("Font");
+            // Fallback Font Selector
+            ImGui::Text("Fallback Font:");
+            UI::RenderFontSelector("##Fallback", "##FallbackFontSelector", g_SelectedFallbackFontIndex, g_SystemFonts, g_FavoriteFonts,
+                g_FallbackFontSearch, IM_ARRAYSIZE(g_FallbackFontSearch), g_FontManager, true, g_ShowFontPreview,
+                onUpdate, onFav);
+            
+            ImGui::Separator();
 
             // Input Text - Always visible for Text Preview
             if (ImGui::InputText("Text", g_InputText, IM_ARRAYSIZE(g_InputText))) {

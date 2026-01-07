@@ -124,6 +124,7 @@ add_executable(FntGenerator MACOSX_BUNDLE
     src/Utils/FontPreviewUtils.cpp
     src/UI/FontInfoDialog.cpp
     src/UI/ExportDialog.cpp
+    src/UI/FontSelector.cpp
     ${IMGUI_SOURCES}
     ${PLATFORM_SOURCES}
     ${IMGUI_GRADIENT_SOURCES}

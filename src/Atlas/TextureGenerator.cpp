@@ -254,12 +254,16 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
     int currentH = (settings.atlasHeight > 0) ? settings.atlasHeight : 256;
     
     // Heuristic for Auto: Calculate area and start with square
-    if (settings.atlasWidth <= 0) {
+        if (settings.atlasWidth <= 0) {
         long long totalArea = 0;
         int maxGlyphW = 0;
         int maxGlyphH = 0;
         
-        for(const auto& c : chars) {
+        for(auto& c : chars) {
+            // Sanity Check for Glyph Dimensions
+            if (c.packingWidth > 4096) c.packingWidth = 4096;
+            if (c.packingHeight > 4096) c.packingHeight = 4096;
+
             int pw = c.packingWidth + settings.padding;
             int ph = c.packingHeight + settings.padding;
             totalArea += (long long)pw * ph;
@@ -272,11 +276,12 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
         long long safeArea = (long long)(totalArea * 1.05); 
         
         int dim = 128;
-        while((long long)dim * dim < safeArea) dim *= 2;
+        // Prevent infinite loop if safeArea is massive by checking dim < 32768
+        while((long long)dim * dim < safeArea && dim < 16384) dim *= 2;
         
         // constraint min dim to largest glyph
-        while(dim < maxGlyphW) dim *= 2;
-        while(dim < maxGlyphH) dim *= 2;
+        while(dim < maxGlyphW && dim < 16384) dim *= 2;
+        while(dim < maxGlyphH && dim < 16384) dim *= 2;
 
         currentW = std::max(128, dim);
 
@@ -289,6 +294,8 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
              // Ensure it still fits single glyph
              if (currentW < maxGlyphW) currentW = maxGlyphW;
              if (currentW < maxGlyphH) currentW = maxGlyphH;
+        } else if (!settings.allowMultiPage && currentW > 16384) {
+             currentW = 16384; // Hard Limit
         }
 
         if (settings.atlasHeight <= 0) {
@@ -383,6 +390,7 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
                 // BUT only if we haven't hit MaxDim.
                 // If Multi-Page is allowed, we cap growth at 8192 (Soft Limit) to prefer new pages over massive textures.
                 int growLimit = (settings.allowMultiPage) ? 8192 : maxPageDim;
+                if (growLimit > 16384) growLimit = 16384; // Absolute hard limit
 
                 bool canGrowW = (settings.atlasWidth <= 0 && currentW < growLimit);
                 bool canGrowH = (settings.atlasHeight <= 0 && currentH < growLimit);
@@ -811,9 +819,10 @@ AtlasResult TextureGenerator::GenerateTextPreview(FontManager& fontManager, cons
     int minX = 100000, minY = 100000, maxX = -100000, maxY = -100000;
     int currentPenX = 0; 
     
-    for (char c : text) {
+    std::vector<uint32_t> charset = Utils::DecodeUtf8(text.c_str());
+    for (uint32_t code : charset) {
         RenderedChar rc;
-        rc.code = (uint32_t)c;
+        rc.code = code;
         
         FT_Int32 flags = FT_LOAD_RENDER;
         if (settings.hintingMode == 0) flags |= (FT_LOAD_NO_HINTING | FT_LOAD_NO_AUTOHINT); 

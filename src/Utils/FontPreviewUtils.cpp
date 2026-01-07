@@ -23,7 +23,7 @@ namespace Utils {
         }
     }
 
-    unsigned int GenerateFontPreview(const std::string& fontPath) {
+    GLuint GenerateFontPreview(const std::string& fontPath) {
         if (g_FontPreviewCache.find(fontPath) != g_FontPreviewCache.end()) {
             return g_FontPreviewCache[fontPath];
         }
@@ -49,8 +49,8 @@ namespace Utils {
         for (char c : text) {
             if (FT_Load_Char(face, c, FT_LOAD_RENDER)) continue;
             totalW += (face->glyph->advance.x >> 6);
-            maxH = std::max(maxH, (int)face->glyph->bitmap.rows);
-            baseline = std::max(baseline, (int)face->glyph->bitmap_top);
+            maxH = (std::max)(maxH, (int)face->glyph->bitmap.rows);
+            baseline = (std::max)(baseline, (int)face->glyph->bitmap_top);
         }
         
         if (totalW == 0 || maxH == 0) {
