@@ -337,20 +337,96 @@ static std::string GetLanguageString(FT_UShort platform_id, FT_UShort language_i
         // Mask 0xFF to get primary language
         uint8_t primary = language_id & 0xFF;
         switch (primary) {
-            case 0x09: return "en";
-            case 0x0A: return "es";
-            case 0x0C: return "fr";
-            case 0x07: return "de";
-            case 0x10: return "it";
-            case 0x16: return "pt";
-            case 0x19: return "ru";
-            case 0x11: return "ja";
-            case 0x12: return "ko";
-            case 0x04: return "zh";
+            case 0x01: return "ar"; // Arabic
+            case 0x02: return "bg"; // Bulgarian
+            case 0x03: return "ca"; // Catalan
+            case 0x04: return "zh"; // Chinese
+            case 0x05: return "cs"; // Czech
+            case 0x06: return "da"; // Danish
+            case 0x07: return "de"; // German
+            case 0x08: return "el"; // Greek
+            case 0x09: return "en"; // English
+            case 0x0A: return "es"; // Spanish
+            case 0x0B: return "fi"; // Finnish
+            case 0x0C: return "fr"; // French
+            case 0x0D: return "he"; // Hebrew
+            case 0x0E: return "hu"; // Hungarian
+            case 0x0F: return "is"; // Icelandic
+            case 0x10: return "it"; // Italian
+            case 0x11: return "ja"; // Japanese
+            case 0x12: return "ko"; // Korean
+            case 0x13: return "nl"; // Dutch
+            case 0x14: return "no"; // Norwegian
+            case 0x15: return "pl"; // Polish
+            case 0x16: return "pt"; // Portuguese
+            case 0x17: return "rm"; // Romansh
+            case 0x18: return "ro"; // Romanian
+            case 0x19: return "ru"; // Russian
+            case 0x1A: return "hr"; // Croatian
+            case 0x1B: return "sk"; // Slovak
+            case 0x1C: return "sq"; // Albanian
+            case 0x1D: return "sv"; // Swedish
+            case 0x1E: return "th"; // Thai
+            case 0x1F: return "tr"; // Turkish
+            case 0x20: return "ur"; // Urdu
+            case 0x21: return "id"; // Indonesian
+            case 0x22: return "uk"; // Ukrainian
+            case 0x23: return "be"; // Belarusian
+            case 0x24: return "sl"; // Slovenian
+            case 0x25: return "et"; // Estonian
+            case 0x26: return "lv"; // Latvian
+            case 0x27: return "lt"; // Lithuanian
+            case 0x29: return "fa"; // Farsi
+            case 0x2A: return "vi"; // Vietnamese
+            case 0x2B: return "hy"; // Armenian
+            case 0x2C: return "az"; // Azeri
+            case 0x2D: return "eu"; // Basque
+            case 0x2F: return "mk"; // Macedonian
+            case 0x3E: return "ms"; // Malay
+            case 0x41: return "sw"; // Swahili
+            case 0x49: return "ta"; // Tamil
+            case 0x56: return "gl"; // Galician
             default: break;
         }
     } else if (platform_id == 1) { // Mac
-        if (language_id == 0) return "en";
+        // https://developer.apple.com/library/archive/documentation/KeyboardLayouts/Conceptual/LinguisticsKBLayout/Articles/LanguageIdentifiers.html
+        switch (language_id) {
+            case 0: return "en";
+            case 1: return "fr";
+            case 2: return "de";
+            case 3: return "it";
+            case 4: return "nl";
+            case 5: return "sv";
+            case 6: return "es";
+            case 7: return "da";
+            case 8: return "pt";
+            case 9: return "no";
+            case 10: return "he";
+            case 11: return "ja";
+            case 12: return "ar";
+            case 13: return "fi";
+            case 14: return "el";
+            case 15: return "is";
+            case 16: return "mt";
+            case 17: return "tr";
+            case 18: return "hr";
+            case 19: return "zh-tw";
+            case 20: return "ur";
+            case 21: return "hi";
+            case 22: return "th";
+            case 23: return "ko";
+            case 24: return "lt";
+            case 25: return "pl";
+            case 26: return "hu";
+            case 27: return "et";
+            case 28: return "lv";
+            case 29: return "se";
+            case 30: return "fo";
+            case 31: return "fa";
+            case 32: return "ru";
+            case 33: return "zh-cn";
+            default: break;
+        }
     }
     std::stringstream ss;
     ss << platform_id << ":" << language_id;

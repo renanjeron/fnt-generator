@@ -7,6 +7,8 @@
 static bool g_PlatformOpen = false;
 static bool g_RequestOpen = false;
 static FontMetadata g_CachedMetadata;
+static std::string g_SelectedLanguage = "";
+static std::vector<std::string> g_AvailableLanguages;
 
 // Helper for ReadOnly InputText
 static void TextReadOnly(const char* label, const std::string& text) {
@@ -15,7 +17,18 @@ static void TextReadOnly(const char* label, const std::string& text) {
 
 namespace FontInfoDialog {
     
-    // ... RenderButton remains same ...
+    // Internal helper for tooltips
+    static void HelpMarker(const char* desc) {
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+            ImGui::TextUnformatted(desc);
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
+    }
+
     void RenderButton(const FontManager& fontManager) {
          if (ImGui::Button(" i ")) {
              g_CachedMetadata = fontManager.GetMetadata();
@@ -25,6 +38,23 @@ namespace FontInfoDialog {
              if (!path.empty()) {
                  g_CachedMetadata.insert(g_CachedMetadata.begin(), { "File Path", "", path });
              }
+
+             // Collect unique languages
+             g_AvailableLanguages.clear();
+             bool hasEn = false;
+             for (const auto& entry : g_CachedMetadata) {
+                 if (entry.language.empty()) continue; // Skip general info
+                 
+                 if (std::find(g_AvailableLanguages.begin(), g_AvailableLanguages.end(), entry.language) == g_AvailableLanguages.end()) {
+                     g_AvailableLanguages.push_back(entry.language);
+                     if (entry.language == "en") hasEn = true;
+                 }
+             }
+             std::sort(g_AvailableLanguages.begin(), g_AvailableLanguages.end());
+
+             if (hasEn) g_SelectedLanguage = "en";
+             else if (!g_AvailableLanguages.empty()) g_SelectedLanguage = g_AvailableLanguages[0];
+             else g_SelectedLanguage = "";
 
              g_RequestOpen = true; 
         }
@@ -45,6 +75,7 @@ namespace FontInfoDialog {
             // Dimensions
             float maxHeight = ImGui::GetIO().DisplaySize.y * 0.8f;
             float maxWidth = ImGui::GetIO().DisplaySize.x * 0.8f;
+            if (maxWidth < 450) maxWidth = 450;
             if (maxWidth > 900) maxWidth = 900;
             if (maxHeight > 700) maxHeight = 700;
 
@@ -57,26 +88,47 @@ namespace FontInfoDialog {
                     if (g_CachedMetadata.empty()) {
                         ImGui::Text("No metadata available.");
                     } else {
-                        if (ImGui::BeginTable("MetadataTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit)) {
-                            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 150.0f);
-                            ImGui::TableSetupColumn("Lang", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+                        // Language Selector
+                        if (!g_AvailableLanguages.empty()) {
+                            ImGui::SetNextItemWidth(150.0f);
+                            if (ImGui::BeginCombo("View Language", g_SelectedLanguage.c_str())) {
+                                for (const auto& lang : g_AvailableLanguages) {
+                                    bool isSelected = (g_SelectedLanguage == lang);
+                                    if (ImGui::Selectable(lang.c_str(), isSelected)) {
+                                        g_SelectedLanguage = lang;
+                                    }
+                                    if (isSelected) ImGui::SetItemDefaultFocus();
+                                }
+                                ImGui::EndCombo();
+                            }
+                            ImGui::SameLine();
+                            HelpMarker("Select which language strings to display. Metadata items without a language tag are always shown.");
+                            ImGui::Spacing();
+                        }
+
+                        if (ImGui::BeginTable("MetadataTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit)) {
+                            ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 180.0f);
                             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
                             ImGui::TableHeadersRow();
 
                             int rowId = 0;
                             for (const auto& entry : g_CachedMetadata) {
+                                // Filter logic: Show if language is empty (General) OR matches selected language
+                                if (!entry.language.empty() && entry.language != g_SelectedLanguage) {
+                                    continue;
+                                }
+
                                 ImGui::PushID(rowId++);
                                 ImGui::TableNextRow();
+                                
                                 ImGui::TableSetColumnIndex(0);
                                 ImGui::TextUnformatted(entry.nameID.c_str());
                                 
                                 ImGui::TableSetColumnIndex(1);
-                                ImGui::TextUnformatted(entry.language.c_str());
-
-                                ImGui::TableSetColumnIndex(2);
                                 std::string val = entry.value;
                                 ImGui::SetNextItemWidth(-FLT_MIN);
                                 ImGui::InputText("##Val", (char*)val.c_str(), val.size()+1, ImGuiInputTextFlags_ReadOnly);
+                                
                                 ImGui::PopID();
                             }
                             ImGui::EndTable();
@@ -101,7 +153,7 @@ namespace FontInfoDialog {
                         }
                      }
 
-                     ImGui::Text("Support for %d languages detected", (int)supported.size());
+                     ImGui::Text("Support for %d languages detected based on glyphs", (int)supported.size());
                      ImGui::Separator();
                      ImGui::Spacing();
                      
