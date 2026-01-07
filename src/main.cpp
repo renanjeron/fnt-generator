@@ -808,6 +808,7 @@ void UpdateTextPreview(const char* text) {
 }
 
 void UpdatePreview(const char* text) {
+    if (!g_FontManager.IsLoaded()) return;
     UpdateTextPreview(text);
     g_AtlasUpdatePending = true;
     g_LastInteractionTime = ImGui::GetTime();
@@ -967,6 +968,9 @@ int main(int, char**) {
                 g_AtlasFuture = std::async(std::launch::async, [settings, charset]() {
                     return TextureGenerator::GenerateAtlas(g_FontManager, charset, settings);
                 });
+            } else {
+                // Clear pending if no font is available
+                g_AtlasUpdatePending = false;
             }
         }
 
@@ -1861,7 +1865,16 @@ int main(int, char**) {
                     }
 
                     // Interaction & Display
-                    if (g_TextPreviewTexture) {
+                    if (!g_FontManager.IsLoaded()) {
+                         const char* msg = "PLEASE SELECT A FONT";
+                         ImVec2 txtSz = ImGui::CalcTextSize(msg);
+                         ImVec2 boxPos = ImVec2(p_min.x + (canvas_sz.x - txtSz.x - 20) * 0.5f, p_min.y + (canvas_sz.y - txtSz.y - 20) * 0.5f);
+                         ImVec2 boxSize = ImVec2(txtSz.x + 20, txtSz.y + 20);
+                         
+                         draw_list->AddRectFilled(boxPos, ImVec2(boxPos.x + boxSize.x, boxPos.y + boxSize.y), IM_COL32(40, 30, 0, 200));
+                         draw_list->AddRect(boxPos, ImVec2(boxPos.x + boxSize.x, boxPos.y + boxSize.y), IM_COL32(255, 150, 0, 255), 4.0f);
+                         draw_list->AddText(ImVec2(boxPos.x + 10, boxPos.y + 10), IM_COL32(255, 180, 50, 255), msg);
+                    } else if (g_TextPreviewTexture) {
                         // Zoom via Scroll
                         if (ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel != 0) {
                             float zoomStep = 0.1f * g_TextZoom;
@@ -2149,7 +2162,18 @@ int main(int, char**) {
                             ImGui::EndPopup();
                         }
                     } else {
-                        ImGui::Text("Atlas not generated.");
+                        if (!g_FontManager.IsLoaded()) {
+                             const char* msg = "SELECT A FONT TO GENERATE ATLAS";
+                             ImVec2 txtSz = ImGui::CalcTextSize(msg);
+                             ImVec2 boxPos = ImVec2(p_min.x + (canvas_sz.x - txtSz.x - 20) * 0.5f, p_min.y + (canvas_sz.y - txtSz.y - 20) * 0.5f);
+                             ImVec2 boxSize = ImVec2(txtSz.x + 20, txtSz.y + 20);
+
+                             draw_list->AddRectFilled(boxPos, ImVec2(boxPos.x + boxSize.x, boxPos.y + boxSize.y), IM_COL32(50, 0, 0, 200));
+                             draw_list->AddRect(boxPos, ImVec2(boxPos.x + boxSize.x, boxPos.y + boxSize.y), IM_COL32(255, 0, 0, 255), 4.0f);
+                             draw_list->AddText(ImVec2(boxPos.x + 10, boxPos.y + 10), IM_COL32(255, 100, 100, 255), msg);
+                        } else {
+                            ImGui::Text("Atlas not generated.");
+                        }
                     }
                     ImGui::PopClipRect();
 

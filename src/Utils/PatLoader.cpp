@@ -41,9 +41,6 @@ std::string PatLoader::ReadString(std::ifstream& file) {
     }
     
     // Check/Skip null terminator if present (2 bytes 00 00)
-    // Actually, ps-pat-load just reads len*2.
-    // PHP writes ucs2 string then 00 00.
-    // Let's peek.
     int p1 = file.peek();
     if (p1 == 0) {
         std::streampos cur = file.tellg();
@@ -88,48 +85,60 @@ void PatLoader::DecodePackBits(const uint8_t* src, size_t srcLen, std::vector<ui
 
 std::vector<PatImage> PatLoader::Load(const std::string& path) {
     std::vector<PatImage> images;
+#ifdef _DEBUG
     std::ofstream log("pat_debug_log.txt");
     log << "[PatLoader] Start Load: " << path << std::endl;
+#endif
 
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
+#ifdef _DEBUG
         log << "[PatLoader] Failed to open file." << std::endl;
+#endif
         return images;
     }
 
     // 1. Global Header
     uint32_t sig = ReadUInt32BE(file); 
     if (sig != 0x38425054) { // "8BPT"
+#ifdef _DEBUG
         log << "[PatLoader] Invalid Signature" << std::endl;
+#endif
         return images;
     }
 
     uint16_t version = ReadUInt16BE(file); // 2 bytes
     if (version != 1) {
+#ifdef _DEBUG
         log << "[PatLoader] Unsupported Version: " << version << std::endl;
+#endif
         return images;
     }
 
     uint32_t count = ReadUInt32BE(file); // 4 bytes
+#ifdef _DEBUG
     log << "[PatLoader] Pattern Count: " << count << std::endl;
+#endif
 
     for (uint32_t i = 0; i < count; i++) {
+#ifdef _DEBUG
         log << "[PatLoader] Loading Pattern " << i << std::endl;
+#endif
         
         uint32_t patVer = ReadUInt32BE(file);
         uint32_t mode = ReadUInt32BE(file); // 1=Gray, 2=Indexed, 3=RGB
         uint16_t h = ReadUInt16BE(file);
         uint16_t w = ReadUInt16BE(file);
         
+#ifdef _DEBUG
         log << "[PatLoader] PatVer: " << patVer << " Mode: " << mode << " Size: " << w << "x" << h << std::endl;
+#endif
 
         std::string name = ReadString(file);
+#ifdef _DEBUG
         log << "[PatLoader] Name: " << name << std::endl;
+#endif
 
-        // ID / UUID (37 bytes usually - length byte + 36 chars? or just fixed?)
-        // ps-pat-load.c skips 37 bytes.
-        // PHP writes 0x24 (1 byte) + 36 byte UUID strings.
-        // Let's read 1 byte len.
         uint8_t idLen = ReadUInt8(file);
         // Skip idLen bytes
         file.seekg(idLen, std::ios::cur);
@@ -142,11 +151,12 @@ std::vector<PatImage> PatLoader::Load(const std::string& path) {
             file.seekg(4, std::ios::cur);
         }
 
-        uint32_t colorModel = ReadUInt32BE(file); // Should be 3 for RGB, 1 for Gray. Matches Mode?
-        // Note: Reference reads this.
+        uint32_t colorModel = ReadUInt32BE(file); 
         
         uint32_t patternSize = ReadUInt32BE(file); // Size of remaining data
+#ifdef _DEBUG
         log << "[PatLoader] Pattern Data Size: " << patternSize << std::endl;
+#endif
         
         std::streampos patDataStart = file.tellg();
         std::streampos nextPatPos = patDataStart + (std::streampos)patternSize;
@@ -158,7 +168,9 @@ std::vector<PatImage> PatLoader::Load(const std::string& path) {
         uint32_t right = ReadUInt32BE(file);
         uint32_t depth = ReadUInt32BE(file); // 24?
 
+#ifdef _DEBUG
         log << "[PatLoader] Rect: " << left << "," << top << " " << " Depth: " << depth << std::endl;
+#endif
 
         // Channels
         // Derived from Mode
@@ -171,15 +183,6 @@ std::vector<PatImage> PatLoader::Load(const std::string& path) {
             // Read Channel
             uint32_t chVer = ReadUInt32BE(file);
             uint32_t chSize = ReadUInt32BE(file); // Length of data + header fields?
-            // ps-pat-load.c:
-            // if (!pspat_read_ulong (f, &sample_size)) ...
-            // And then later reads data of size: width * height?
-            // NO. The data is compressed.
-            // chSize includes data + some header bytes?
-            
-            // Ref: channel['size'] = 23 + data_size.
-            // Header is 23 bytes (after size?).
-            // Let's parse header.
             
             uint32_t depthUnused = ReadUInt32BE(file);
             uint32_t cTop = ReadUInt32BE(file);
@@ -194,7 +197,9 @@ std::vector<PatImage> PatLoader::Load(const std::string& path) {
             
             uint32_t dataLen = (chSize >= 23) ? (chSize - 23) : 0;
             
+#ifdef _DEBUG
             log << "[PatLoader] Chan " << c << " DataLen: " << dataLen << " Comp: " << (int)compression << std::endl;
+#endif
 
             std::vector<uint8_t> chData;
             
@@ -236,33 +241,14 @@ std::vector<PatImage> PatLoader::Load(const std::string& path) {
         // Check for Alpha (if room left)
         bool hasAlpha = false;
         std::streampos cur = file.tellg();
-        // ps-pat-load checks: if (ftell < next_pattern - (88 + 31)) ?
-        // 88 is some padding? 31 is alpha header?
         
         if (cur < nextPatPos) {
-             // Maybe padding?
-             // PHP: writes padding.
              // If we have substantial data left, try reading alpha.
              // Alpha channel has same header (23 bytes) + Ver(4) + Size(4) = 31 bytes minimum + data.
              if ((int64_t)(nextPatPos - cur) > 31) {
+#ifdef _DEBUG
                  log << "[PatLoader] Found extra data, attempting Alpha." << std::endl;
-                 
-                 // Maybe padding first?
-                 // PHP: writes padding.
-                 // We can search for header?
-                 // Simple heuristic: Try to read channel header.
-                 // First 4 bytes = Version (1).
-                 // We can scan for 00 00 00 01?
-                 
-                 // Let's just try reading as channel.
-                 // Need to skip padding?
-                 // ps-pat-load: fseek(f, 88, SEEK_CUR); ???
-                 // It skips 88 bytes padding for RGB?
-                 // Let's peek.
-                 
-                 // Better: align to end, but if we want alpha, we need it.
-                 // Just support RGB for now to fix the bug.
-                 // The user wants patterns, usually opaque.
+#endif
              }
         }
 
