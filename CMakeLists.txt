@@ -5,7 +5,7 @@ set(CMAKE_POLICY_DEFAULT_CMP0077 NEW) # Start allowing option() to override cach
 cmake_policy(SET CMP0169 OLD) # Suppress FetchContent_Populate deprecation warning
 set(CMAKE_POLICY_VERSION_MINIMUM "3.5")
 
-project(FntGenerator VERSION 1.1.0 LANGUAGES CXX)
+project(FntGenerator VERSION 1.1.5 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
