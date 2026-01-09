@@ -1,6 +1,8 @@
 
 # Build directories check
 /build/
+/build_linux/
+/build_macos/
 /out/
 /bin/
 /dist/
