@@ -158,6 +158,11 @@ target_link_libraries(FntGenerator PRIVATE
 )
 
 if(WIN32)
+   # Hide console in release mode
+    target_link_options(FntGenerator PRIVATE 
+        "$<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS>"
+        "$<$<CONFIG:Release>:/ENTRY:mainCRTStartup>" 
+    )
     target_link_libraries(FntGenerator PRIVATE opengl32)
 elseif(APPLE)
     find_library(COCOA_LIBRARY Cocoa)
