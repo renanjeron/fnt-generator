@@ -91,6 +91,13 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
                 } else if (naturalH > 0) {
                     rep.height = naturalH * factor;
                 }
+                
+                // CRITICAL: Scale manual adjustments for SSAA
+                rep.xOffset *= factor;
+                rep.yOffset *= factor;
+                if (rep.advance > 0) {
+                    rep.advance *= factor;
+                }
             }
         }
 
@@ -206,6 +213,11 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
         int atlasX = 0, atlasY = 0;
         int pageIndex = 0;
         bool skip = false;
+        
+        // Manual adjustments for replaced glyphs (to be applied during export)
+        int manualXOffset = 0;
+        int manualYOffset = 0;
+        int manualAdvance = 0; // 0 = use body.advance
     };
     
     std::vector<RenderedChar> chars;
@@ -263,6 +275,12 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
                 rc.body.bearingY = iconBearingY; // Proportional to icon height
                 rc.body.advance = finalW; 
                 
+                
+                // Store manual adjustments for export
+                rc.manualXOffset = rep.xOffset;
+                rc.manualYOffset = rep.yOffset;
+                rc.manualAdvance = rep.advance;
+                
                 if (rep.applyEffects) {
                      // Add padding for effects
                      int p = settings.padding; 
@@ -270,15 +288,8 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
  
                      rc.outline = rc.body;
                      
-                    
-                     rc.body.bearingX += rep.xOffset;
-                     rc.outline.bearingX += rep.xOffset; // Sync outline
-                     
-                   
-                     rc.body.bearingY -= rep.yOffset;
-                     rc.outline.bearingY -= rep.yOffset;
-                     
-                     if (rep.advance > 0) rc.body.advance = rep.advance;
+                     // NOTE: Manual adjustments (xOffset, yOffset, advance) are NOT applied here
+                     // They are stored in rc.manual* fields and applied during export only
                      
                      if (settings.enableStroke && settings.strokeWidth > 0) {
                          int s = (int)ceil(settings.strokeWidth);
@@ -625,9 +636,22 @@ AtlasResult TextureGenerator::GenerateAtlas(FontManager& fontManager, const std:
         gp.y = rc.atlasY;
         gp.width = rc.packingWidth;
         gp.height = rc.packingHeight;
-        gp.xoffset = -rc.penOffsetX + settings.globalXOffset; 
-        gp.yoffset = (fontManager.GetAscender() - rc.penOffsetY) + settings.globalYOffset;
-        gp.advance = rc.body.advance + settings.globalXAdvance;
+        
+        // Use manual advance if specified, otherwise use body.advance
+        int baseAdvance = (rc.manualAdvance > 0) ? rc.manualAdvance : rc.body.advance;
+        gp.advance = baseAdvance + settings.globalXAdvance;
+
+        // Apply offsets
+        if (settings.replacedGlyphs.count(rc.code)) {
+            // Replaced glyph: use 1:1 mapping from UI to XML (plus global adjustments)
+            gp.xoffset = rc.manualXOffset + settings.globalXOffset;
+            gp.yoffset = rc.manualYOffset + settings.globalYOffset;
+        } else {
+            // Normal font glyph: relative to baseline
+            gp.xoffset = -rc.penOffsetX + settings.globalXOffset; 
+            gp.yoffset = (fontManager.GetAscender() - rc.penOffsetY) + settings.globalYOffset;
+        }
+        
         gp.pageIndex = rc.pageIndex;
         result.glyphs.push_back(gp);
     }

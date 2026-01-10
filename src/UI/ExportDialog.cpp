@@ -33,6 +33,7 @@ void UpdateAtlasTextures();
 static bool g_Open = false;
 static bool g_RequestOpen = false;
 static float g_SuccessNotifyTimer = 0.0f;
+static int s_ExportSSAAFactor = 1;
 
 namespace ExportDialog {
 
@@ -53,6 +54,7 @@ namespace ExportDialog {
             ImGui::OpenPopup("Export Font Settings");
             g_Open = true;
             g_RequestOpen = false;
+            s_ExportSSAAFactor = g_SSAAFactor; // Reset to match global setting initially
         }
 
         if (ImGui::BeginPopupModal("Export Font Settings", &g_Open, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -92,13 +94,13 @@ namespace ExportDialog {
             // 5. SSAA (Quality)
             const char* ssaaOptions[] = { "Standard (1x)", "High Quality (2x)", "Ultra Quality (4x)" };
             int ssaaIdx = 0;
-            if (g_SSAAFactor == 2) ssaaIdx = 1;
-            else if (g_SSAAFactor == 4) ssaaIdx = 2;
+            if (s_ExportSSAAFactor == 2) ssaaIdx = 1;
+            else if (s_ExportSSAAFactor == 4) ssaaIdx = 2;
 
             if (ImGui::Combo("Quality (SSAA)", &ssaaIdx, ssaaOptions, IM_ARRAYSIZE(ssaaOptions))) {
-                if (ssaaIdx == 0) g_SSAAFactor = 1;
-                else if (ssaaIdx == 1) g_SSAAFactor = 2;
-                else if (ssaaIdx == 2) g_SSAAFactor = 4;
+                if (ssaaIdx == 0) s_ExportSSAAFactor = 1;
+                else if (ssaaIdx == 1) s_ExportSSAAFactor = 2;
+                else if (ssaaIdx == 2) s_ExportSSAAFactor = 4;
             }
 
             // 6. Background Color
@@ -134,6 +136,7 @@ namespace ExportDialog {
                 
                 AtlasSettings hqSettings = ConstructSettings();
                 hqSettings.hintingMode = g_HintingMode;
+                hqSettings.superSamplingFactor = s_ExportSSAAFactor; // Override with local setting
 
                 // Re-generate charset logic
                 std::vector<uint32_t> charset = Utils::DecodeUtf8(g_CustomGlyphsText.c_str());
