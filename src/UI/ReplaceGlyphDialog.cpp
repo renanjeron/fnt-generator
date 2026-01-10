@@ -67,7 +67,7 @@ namespace UI {
             return;
         }
         
-        ImGui::Text("Replace U+%04X with Image", s_CharCode);
+        ImGui::Text("Replace U+%04X (%c) with Image", s_CharCode, s_CharCode);
         ImGui::Separator();
         
         ImGui::Text("Image Path:");
