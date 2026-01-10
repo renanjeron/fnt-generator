@@ -556,7 +556,10 @@ int main(int, char**) {
             }
         }
         #elif defined(__APPLE__)
-        const char* macFont = "/System/Library/Fonts/PingFang.ttc";
+        // PingFang structure can be complex for stb_truetype, use Menlo or Helvetica
+        const char* macFont = "/System/Library/Fonts/Menlo.ttc";
+        if (!std::filesystem::exists(macFont)) macFont = "/System/Library/Fonts/Helvetica.ttc";
+        
         if (std::filesystem::exists(macFont)) {
             io.Fonts->AddFontFromFileTTF(macFont, 16.0f, NULL, ranges.Data);
             io.Fonts->AddFontFromFileTTF(macFont, 32.0f, NULL, ranges.Data);
