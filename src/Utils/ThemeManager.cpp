@@ -641,5 +641,16 @@ namespace Utils {
         style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.8039216f, 0.8235294f, 0.45490196f, 0.502f);
     }
 
+    ImVec4 ThemeManager::GetFavoriteColor() {
+        bool isLight = (s_CurrentTheme == "Light" || s_CurrentTheme == "Adobe Spectrum Light" || s_CurrentTheme == "Comfortable Light Orange");
+        if (isLight) {
+            return ImVec4(1.0f, 0.5f, 0.0f, 1.0f); // Vibrant Orange for light themes
+        }
+        return ImVec4(1.0f, 0.84f, 0.0f, 1.0f); // Gold for dark themes
+    }
 
+    ImVec4 ThemeManager::GetFontPreviewColor() {
+        // Return standard text color for the current theme
+        return ImGui::GetStyleColorVec4(ImGuiCol_Text);
+    }
 }

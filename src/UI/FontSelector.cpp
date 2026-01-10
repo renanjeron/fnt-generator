@@ -3,6 +3,7 @@
 #include <cmath>
 #include "../Utils/StringUtils.h"
 #include "../Utils/FontPreviewUtils.h"
+#include "../Utils/ThemeManager.h"
 
 namespace UI {
 
@@ -25,8 +26,21 @@ namespace UI {
         ImVec2 center = ImVec2((p_min.x + p_max.x) * 0.5f, (p_min.y + p_max.y) * 0.5f);
         float radius = 7.0f;
 
-        ImU32 starColor = isFav ? IM_COL32(255, 215, 0, 255) : IM_COL32(100, 100, 100, 150);
-        if (ImGui::IsItemHovered()) starColor = isFav ? IM_COL32(255, 230, 50, 255) : IM_COL32(180, 180, 180, 255);
+        ImVec4 favoriteColor = Utils::ThemeManager::GetFavoriteColor();
+        ImVec4 disabledColor = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+        ImU32 starColor = isFav ? ImGui::ColorConvertFloat4ToU32(favoriteColor) : ImGui::ColorConvertFloat4ToU32(disabledColor);
+        
+        if (ImGui::IsItemHovered()) {
+            if (isFav) {
+                // Slightly brighter favorite
+                ImVec4 hoveredFav = favoriteColor;
+                hoveredFav.x = (std::min)(1.0f, hoveredFav.x + 0.1f);
+                hoveredFav.y = (std::min)(1.0f, hoveredFav.y + 0.1f);
+                starColor = ImGui::ColorConvertFloat4ToU32(hoveredFav);
+            } else {
+                starColor = ImGui::ColorConvertFloat4ToU32(ImGui::GetStyleColorVec4(ImGuiCol_Text));
+            }
+        }
 
         ImVec2 starPoints[10];
         for(int k=0; k<10; k++) {
@@ -110,12 +124,12 @@ namespace UI {
                 DrawStarIcon(isFav, systemFonts[idx].path, onFavoriteToggle);
                 ImGui::SameLine();
                 
-                if (isFav) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.8f, 1.0f)); 
+                if (isFav) ImGui::PushStyleColor(ImGuiCol_Text, Utils::ThemeManager::GetFavoriteColor()); 
 
                 if (showPreview) {
                     GLuint tex = Utils::GenerateFontPreview(systemFonts[idx].path);
                     if (tex != 0) {
-                        ImGui::Image((void*)(intptr_t)tex, ImVec2(40, 20), ImVec2(0,0), ImVec2(1,1), ImVec4(1,1,1,1), ImVec4(1,1,1,0.0f));
+                        ImGui::Image((void*)(intptr_t)tex, ImVec2(40, 20), ImVec2(0,0), ImVec2(1,1), Utils::ThemeManager::GetFontPreviewColor(), ImVec4(1,1,1,0.0f));
                         ImGui::SameLine();
                     }
                 }

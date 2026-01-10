@@ -23,6 +23,8 @@ namespace Utils {
         static std::vector<std::string> GetAvailableThemes();
         static std::string GetCurrentThemeName();
         static EffectThemeColors GetEffectColors(bool enabled);
+        static ImVec4 GetFavoriteColor();
+        static ImVec4 GetFontPreviewColor();
         
     private:
         static void ApplyDarkTheme();
