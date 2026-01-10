@@ -79,6 +79,9 @@ public:
     // Check if the font has all glyphs in the list
     bool HasGlyphs(const std::vector<uint32_t>& charCodes) const;
     
+    // Check if the font has ANY glyph in the range [start, end]
+    bool HasAnyGlyph(uint32_t start, uint32_t end) const;
+    
     // Get font metrics
     int GetAscender() const;
     int GetDescender() const;

@@ -127,6 +127,18 @@ bool FontManager::HasGlyphs(const std::vector<uint32_t>& charCodes) const {
     return true;
 }
 
+bool FontManager::HasAnyGlyph(uint32_t start, uint32_t end) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (!m_face) return false;
+
+    // Fast check: iterate range and find at least one
+    for (uint32_t code = start; code <= end; code++) {
+        if (FT_Get_Char_Index(m_face, code) != 0) return true;
+        if (m_fallbackFace && FT_Get_Char_Index(m_fallbackFace, code) != 0) return true;
+    }
+    return false;
+}
+
 GlyphBitmap FontManager::RenderGlyph(uint32_t charCode, FT_Int32 loadFlags) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     GlyphBitmap result = { {}, 0, 0, 0, 0, 0 };

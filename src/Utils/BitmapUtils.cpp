@@ -138,7 +138,9 @@ namespace BitmapUtils {
         long size = ftell(f);
         fseek(f, 0, SEEK_SET);
         std::vector<uint8_t> fileBuf(size);
-        fread(fileBuf.data(), 1, size, f);
+        if (fread(fileBuf.data(), 1, size, f) != size) {
+            // Handle error or just ignore but silence warning
+        }
         fclose(f);
 
         int w, h, channels;
@@ -387,10 +389,6 @@ void BlitGlyph(std::vector<uint8_t>& dest, int destW, int destH,
                      
                      // Elliptical distance
                      t = std::sqrt(std::pow(rx / radiusX, 2.0f) + std::pow(ry / radiusY, 2.0f));
-                     // Scale so that it covers corners?
-                     // Corner of square is t = 1.41.
-                     // Use t / sqrt(2) to make corners = 1.0? 
-                     // No, let user adjust stops if they want. Standard is edge-to-edge.
                 }
                 
                 uint8_t gradCol[4];
@@ -610,6 +608,165 @@ void FillRect(std::vector<uint8_t>& dest, int destW, int destH,
 
     }
 
+    void ResizeImage(const std::vector<uint8_t>& src, int srcW, int srcH, 
+                     std::vector<uint8_t>& dest, int destW, int destH) {
+         if (src.empty() || srcW <= 0 || srcH <= 0 || destW <= 0 || destH <= 0) return;
+         dest.resize(destW * destH * 4);
+         
+         // Simple Bilinear Scale
+         float xRatio = ((float)(srcW - 1)) / destW;
+         float yRatio = ((float)(srcH - 1)) / destH;
+         
+         for (int i = 0; i < destH; i++) {
+             for (int j = 0; j < destW; j++) {
+                 int x = (int)(xRatio * j);
+                 int y = (int)(yRatio * i);
+                 float xDiff = (xRatio * j) - x;
+                 float yDiff = (yRatio * i) - y;
+                 
+                 int index = (y * srcW + x) * 4;
+                 
+                 // Pixel A
+                 uint8_t aR = src[index]; 
+                 uint8_t aG = src[index+1];
+                 uint8_t aB = src[index+2];
+                 uint8_t aA = src[index+3];
+                 
+                 // Pixel B
+                 int indexB = index + 4;
+                 uint8_t bR = src[indexB];
+                 uint8_t bG = src[indexB+1]; 
+                 uint8_t bB = src[indexB+2];
+                 uint8_t bA = src[indexB+3];
+                 
+                 // Pixel C
+                 int indexC = index + (srcW * 4);
+                 uint8_t cR = src[indexC]; 
+                 uint8_t cG = src[indexC+1]; 
+                 uint8_t cB = src[indexC+2]; 
+                 uint8_t cA = src[indexC+3];
+                 
+                 // Pixel D
+                 int indexD = index + (srcW * 4) + 4;
+                 uint8_t dR = src[indexD];
+                 uint8_t dG = src[indexD+1]; 
+                 uint8_t dB = src[indexD+2];
+                 uint8_t dA = src[indexD+3];
+                 
+                 // Interpolate X
+                 float col0R = aR * (1 - xDiff) + bR * xDiff;
+                 float col0G = aG * (1 - xDiff) + bG * xDiff;
+                 float col0B = aB * (1 - xDiff) + bB * xDiff;
+                 float col0A = aA * (1 - xDiff) + bA * xDiff;
+                 
+                 float col1R = cR * (1 - xDiff) + dR * xDiff;
+                 float col1G = cG * (1 - xDiff) + dG * xDiff;
+                 float col1B = cB * (1 - xDiff) + dB * xDiff;
+                 float col1A = cA * (1 - xDiff) + dA * xDiff;
+                 
+                 // Interpolate Y
+                 int destIndex = (i * destW + j) * 4;
+                 dest[destIndex]   = (uint8_t)(col0R * (1 - yDiff) + col1R * yDiff);
+                 dest[destIndex+1] = (uint8_t)(col0G * (1 - yDiff) + col1G * yDiff);
+                 dest[destIndex+2] = (uint8_t)(col0B * (1 - yDiff) + col1B * yDiff);
+                 dest[destIndex+3] = (uint8_t)(col0A * (1 - yDiff) + col1A * yDiff);
+             }
+         }
+    }
+
+
+
+
+
+    std::vector<uint8_t> DilateAlpha(const std::vector<uint8_t>& src, int w, int h, float radius, int& outW, int& outH) {
+        int r = (int)std::ceil(radius);
+        if (r <= 0) {
+            outW = w; outH = h;
+            return src;
+        }
+        
+        outW = w + r * 2;
+        outH = h + r * 2;
+        std::vector<uint8_t> out(outW * outH, 0);
+        float rSq = radius * radius;
+        
+        for (int y = 0; y < outH; y++) {
+            // Source-relative center y
+            int cy = y - r;
+            
+            // Optimization: If row is far from any content, skip? 
+            // Hard without pre-scan. Just do logic bounds.
+            int minKy = std::max(0, cy - r);
+            int maxKy = std::min(h - 1, cy + r);
+            
+            for (int x = 0; x < outW; x++) {
+                int cx = x - r;
+                int minKx = std::max(0, cx - r);
+                int maxKx = std::min(w - 1, cx + r);
+                
+                uint8_t maxVal = 0;
+
+                for (int sy = minKy; sy <= maxKy; sy++) {
+                    float dy = (float)(sy - cy);
+                    // Optimization: Check Y distance first
+                    if (dy*dy > rSq) continue;
+
+                    for (int sx = minKx; sx <= maxKx; sx++) {
+                         float dx = (float)(sx - cx);
+                         if (dx*dx + dy*dy <= rSq) {
+                             // Correct index logic: src is row-major w x h
+                             int val = src[sy * w + sx];
+                             if (val > maxVal) {
+                                 maxVal = (uint8_t)val;
+                                 if (maxVal == 255) goto done_pixel;
+                             }
+                         }
+                    }
+                }
+                done_pixel:
+                out[y * outW + x] = maxVal;
+            }
+        }
+        return out;
+    }
+
+    void BlitImage(std::vector<uint8_t>& dest, int destW, int destH, 
+                   int x, int y, 
+                   const std::vector<uint8_t>& srcPixels, int srcW, int srcH)
+    {
+        if (srcPixels.empty() || srcW == 0 || srcH == 0) return;
+        if (dest.empty() || destW == 0) return;
+
+        for (int sy = 0; sy < srcH; sy++) {
+            for (int sx = 0; sx < srcW; sx++) {
+                int destX = x + sx;
+                int destY = y + sy;
+
+                if (destX < 0 || destX >= destW) continue;
+                if (destY < 0 || destY >= destH) continue;
+
+                int srcIdx = (sy * srcW + sx) * 4;
+                int destIdx = (destY * destW + destX) * 4;
+
+                uint8_t sr = srcPixels[srcIdx + 0];
+                uint8_t sg = srcPixels[srcIdx + 1];
+                uint8_t sb = srcPixels[srcIdx + 2];
+                uint8_t sa = srcPixels[srcIdx + 3];
+
+                if (sa == 0) continue;
+
+                if (dest[destIdx + 3] == 0) {
+                    dest[destIdx + 0] = sr;
+                    dest[destIdx + 1] = sg;
+                    dest[destIdx + 2] = sb;
+                    dest[destIdx + 3] = sa;
+                } else {
+                    BlendPixels(&dest[destIdx], sr, sg, sb, sa / 255.0f);
+                }
+            }
+        }
+    }
+
     bool SaveImage(const std::string& path, int width, int height, const std::vector<uint8_t>& pixels) {
         if (pixels.empty() || width <= 0 || height <= 0) return false;
         // 4 components for RGBA
@@ -622,3 +779,5 @@ void FillRect(std::vector<uint8_t>& dest, int destW, int destH,
     }
 
 }
+
+

@@ -4,6 +4,9 @@
 #include <set>
 #include <functional>
 #include "imgui.h"
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <GLFW/glfw3.h>
 #include "../Utils/PlatformUtils.h"
 #include "../Font/FontManager.h"

@@ -5,7 +5,7 @@ set(CMAKE_POLICY_DEFAULT_CMP0077 NEW) # Start allowing option() to override cach
 cmake_policy(SET CMP0169 OLD) # Suppress FetchContent_Populate deprecation warning
 set(CMAKE_POLICY_VERSION_MINIMUM "3.5")
 
-project(FntGenerator VERSION 1.1.5 LANGUAGES CXX)
+project(FntGenerator VERSION 1.2.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -117,6 +117,8 @@ add_executable(FntGenerator MACOSX_BUNDLE
     src/Utils/Exporter.cpp
     src/Utils/BitmapUtils.cpp
     src/Utils/StringUtils.cpp
+    src/Utils/SettingsManager.cpp
+    src/Utils/SettingsManager.h
     src/Utils/JsonUtils.cpp
     src/Utils/StyleUtils.cpp
     src/Utils/UIUtils.cpp
@@ -125,6 +127,9 @@ add_executable(FntGenerator MACOSX_BUNDLE
     src/UI/FontInfoDialog.cpp
     src/UI/ExportDialog.cpp
     src/UI/FontSelector.cpp
+    src/UI/ReplaceGlyphDialog.cpp
+    src/UI/PreferencesPopup.cpp
+    src/Utils/ThemeManager.cpp
     ${IMGUI_SOURCES}
     ${PLATFORM_SOURCES}
     ${IMGUI_GRADIENT_SOURCES}
@@ -170,6 +175,16 @@ else()
     target_link_libraries(FntGenerator PRIVATE GL dl pthread)
 endif()
 
+# Copy local resources to build directory
+file(COPY "${CMAKE_SOURCE_DIR}/res" DESTINATION "${CMAKE_BINARY_DIR}")
+
+# For macOS Bundle, ensuring resources are copied into the bundle
+if(APPLE)
+    set_source_files_properties("${CMAKE_SOURCE_DIR}/res/ui_font.ttf" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    target_sources(FntGenerator PRIVATE "${CMAKE_SOURCE_DIR}/res/ui_font.ttf")
+endif()
+
+
 # Handle macOS Bundle and Metadata
 if(APPLE)
     set_target_properties(FntGenerator PROPERTIES
@@ -183,7 +198,3 @@ if(APPLE)
         RESOURCE "${MACOS_ICON}"
     )
 endif()
-
-
-# Copy resources to build directory
-file(COPY ${CMAKE_SOURCE_DIR}/res DESTINATION ${CMAKE_CURRENT_BINARY_DIR})

@@ -3,7 +3,8 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include <imgui_gradient/imgui_gradient.hpp>
-#include <stdio.h>
+#include <cstdio>
+#include <nlohmann/json.hpp>
 
 #include <cmath>
 #include <vector>
@@ -39,6 +40,11 @@
 #include "UI/FontInfoDialog.h"
 #include "UI/ExportDialog.h"
 #include "UI/FontSelector.h"
+#include "UI/FontSelector.h"
+#include "UI/ReplaceGlyphDialog.h"
+#include "UI/PreferencesPopup.h"
+#include "Utils/ThemeManager.h"
+#include "Utils/SettingsManager.h"
 
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE 0x812F
@@ -51,97 +57,101 @@
 
 
 // --- State Variables ---
-static std::vector<Utils::FontInfo> g_SystemFonts;
+#include "SharedState.h"
+std::vector<Utils::FontInfo> g_SystemFonts;
 FontManager g_FontManager;
-static int g_SelectedFontIndex = -1;
-static char g_InputText[1024] = "Hello Everyone";
-static int g_FontSize = 72;
-static int g_Padding = 5;
+int g_SelectedFontIndex = -1;
+char g_InputText[1024] = "Hello Everyone";
+int g_FontSize = 72;
+int g_Padding = 5;
 
 // Atlas Size
-static int g_AtlasWidth = 0;
-static int g_AtlasHeight = 0;
-static bool g_AllowMultiPage = false;
+// Atlas Size
+int g_AtlasWidth = 0;
+int g_AtlasHeight = 0;
+bool g_AllowMultiPage = false;
+float g_AtlasCheckerOpacity = 1.0f; // Default full opacity
 
 // Fill
 // Fill
-static float g_FillColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-static bool g_EnableGradient = false;
-static ImGG::GradientWidget g_FillGradientWidget;
-static int g_FillGradientType = 0; // 0=Linear, 1=Radial
-static float g_FillGradientAngle = 90.0f;
+float g_FillColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+bool g_EnableGradient = false;
+ImGG::GradientWidget g_FillGradientWidget;
+int g_FillGradientType = 0; // 0=Linear, 1=Radial
+float g_FillGradientAngle = 90.0f;
 
 // Stroke
-static bool g_EnableStroke = false;
-static bool g_EnableStrokeGradient = false;
-static float g_StrokeWidth = 2.0f;
-static float g_StrokeColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-static ImGG::GradientWidget g_StrokeGradientWidget;
-static int g_StrokeGradientType = 0;
-static float g_StrokeGradientAngle = 90.0f;
-static int g_StrokePosition = 0; // 0=Outside, 1=Center, 2=Inside
-static int g_StrokeJoinStyle = 1; // 0=Bevel, 1=Miter, 2=Round
-static float g_StrokeMiterLimit = 2.0f;
+bool g_EnableStroke = false;
+bool g_EnableStrokeGradient = false;
+float g_StrokeWidth = 2.0f;
+float g_StrokeColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+ImGG::GradientWidget g_StrokeGradientWidget;
+int g_StrokeGradientType = 0;
+float g_StrokeGradientAngle = 90.0f;
+int g_StrokePosition = 0; // 0=Outside, 1=Center, 2=Inside
+int g_StrokeJoinStyle = 1; // 0=Bevel, 1=Miter, 2=Round
+float g_StrokeMiterLimit = 2.0f;
 
 // Shadow
-static bool g_EnableShadow = false;
-static int g_ShadowOffsetX = 5;
-static int g_ShadowOffsetY = 5;
-static int g_ShadowBlur = 0;
-static float g_ShadowColor[4] = {0.0f, 0.0f, 0.0f, 0.5f}; // RGBA
+bool g_EnableShadow = false;
+int g_ShadowOffsetX = 5;
+int g_ShadowOffsetY = 5;
+int g_ShadowBlur = 0;
+float g_ShadowColor[4] = {0.0f, 0.0f, 0.0f, 0.5f}; // RGBA
 
 // Bevel
-static bool g_EnableBevel = false;
-static int g_BevelAngle = 135;
-static float g_BevelDistance = 4.0f;
-static float g_BevelSpread = 4.0f;
-static float g_BevelStrength = 1.0f;
-static int g_BevelType = 0; // 0=Inner, 1=Outer
-static float g_BevelHighlightColor[4] = {1.0f, 1.0f, 1.0f, 1.0f}; // RGBA
-static float g_BevelShadowColor[4] = {0.0f, 0.0f, 0.0f, 1.0f}; // RGBA
+bool g_EnableBevel = false;
+int g_BevelAngle = 135;
+float g_BevelDistance = 4.0f;
+float g_BevelSpread = 4.0f;
+float g_BevelStrength = 1.0f;
+int g_BevelType = 0; // 0=Inner, 1=Outer
+float g_BevelHighlightColor[4] = {1.0f, 1.0f, 1.0f, 1.0f}; // RGBA
+float g_BevelShadowColor[4] = {0.0f, 0.0f, 0.0f, 1.0f}; // RGBA
 
 // Inner Glow
-static bool g_EnableInnerGlow = false;
-static float g_InnerGlowSize = 0.0f;
-static float g_InnerGlowChoke = 0.0f;
-static float g_InnerGlowColor[4] = { 1.0f, 1.0f, 1.0f, 0.5f }; // RGBA
-static int g_InnerGlowBlendMode = 0; // 0 = Normal
+bool g_EnableInnerGlow = false;
+float g_InnerGlowSize = 0.0f;
+float g_InnerGlowChoke = 0.0f;
+float g_InnerGlowColor[4] = { 1.0f, 1.0f, 1.0f, 0.5f }; // RGBA
+int g_InnerGlowBlendMode = 0; // 0 = Normal
 
 // Pattern
-static bool g_EnablePattern = false;
+bool g_EnablePattern = false;
 
 // Font Preview
-static bool g_ShowFontPreview = true;
-static std::string g_PatternPath = "";
-static std::vector<PatImage> g_LoadedPatterns;
-static bool g_ShowPatternSelector = false;
-static std::vector<GLuint> g_PatternThumbnails;
-static float g_PatternOpacity = 1.0f;
-static float g_PatternAngle = 0.0f;
-static float g_PatternScale = 1.0f;
-static int g_PatternBlendMode = 0; // BlendMode::Normal
-static int g_PatternMappingMode = 0; // 0=Glyph, 1=Global
-static std::string g_OriginalPatternPath = "";
-static int g_SelectedPatternIndex = -1;
-static bool g_ShowMissingPatternDialog = false;
-static std::string g_MissingPatternPath = "";
-static bool g_RequestPatternPopup = false; 
-static GLuint g_PatternPreviewTexture = 0;
+bool g_ShowFontPreview = true;
+std::string g_PatternPath = "";
+std::vector<PatImage> g_LoadedPatterns;
+bool g_ShowPatternSelector = false;
+std::vector<GLuint> g_PatternThumbnails;
+float g_PatternOpacity = 1.0f;
+float g_PatternAngle = 0.0f;
+float g_PatternScale = 1.0f;
+int g_PatternBlendMode = 0; // BlendMode::Normal
+int g_PatternMappingMode = 0; // 0=Glyph, 1=Global
+std::string g_OriginalPatternPath = "";
+int g_SelectedPatternIndex = -1;
+bool g_ShowMissingPatternDialog = false;
+std::string g_MissingPatternPath = "";
+bool g_RequestPatternPopup = false; 
+GLuint g_PatternPreviewTexture = 0;
 
-static char g_FontSearch[128] = ""; // Search filter
-static int g_SelectedFallbackFontIndex = -1;
-static char g_FallbackFontSearch[128] = "";
+char g_FontSearch[128] = ""; // Search filter
+int g_SelectedFallbackFontIndex = -1;
+char g_FallbackFontSearch[128] = "";
 // --- State Variables ---
 float g_PreviewBgColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f }; // UI Canvas Background
 float g_ExportBgColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };  // Exported File Background
 char g_ExportFilename[128] = "my_font";
 std::string g_ExportPath = "";
 int g_ExportFormat = 0; // 0=XML, 1=Text, 2=Binary
-static bool g_UseExtendedCharset = false;
-static bool g_UseCustomGlyphs = true; // Always true now
+bool g_UseExtendedCharset = false;
+bool g_UseCustomGlyphs = true; // Always true now
 std::string g_CustomGlyphsText = "";
-static std::vector<UnicodeBlock> g_UnicodeBlocks = UNICODE_BLOCKS; // Mutable copy
-static GLuint g_CheckerTexture = 0;
+std::map<uint32_t, ReplacedGlyph> g_ReplacedGlyphs;
+std::vector<UnicodeBlock> g_UnicodeBlocks = UNICODE_BLOCKS; // Mutable copy
+GLuint g_CheckerTexture = 0;
 // Atlas Interaction
 std::set<uint32_t> g_ExcludedGlyphs;
 int g_SSAAFactor = 1; // 1=None, 2=2x, 4=4x
@@ -162,9 +172,9 @@ static ImVec2 g_TextPan = { 0, 0 };
 static bool g_IsPanningText = false;
 
 // Char Adjustments
-static int g_GlobalXAdvance = 0;
-static int g_GlobalXOffset = 0;
-static int g_GlobalYOffset = 0;
+int g_GlobalXAdvance = 0;
+int g_GlobalXOffset = 0;
+int g_GlobalYOffset = 0;
 // Kerning
 bool g_EnableKerning = true;
 
@@ -177,451 +187,16 @@ static std::string g_RecentNotFoundPath = "";
 
 
 
-// Simple Fingerprint to detect actual changes in gradients
-struct GradientFingerprint {
-    struct Mark {
-        float pos;
-        float r, g, b, a;
-    };
-    std::vector<Mark> marks;
-    bool operator!=(const GradientFingerprint& o) const {
-        if (marks.size() != o.marks.size()) return true;
-        for (size_t i = 0; i < marks.size(); i++) {
-            if (marks[i].pos != o.marks[i].pos || marks[i].r != o.marks[i].r || 
-                marks[i].g != o.marks[i].g || marks[i].b != o.marks[i].b || marks[i].a != o.marks[i].a) return true;
-        }
-        return false;
-    }
-};
-
-static GradientFingerprint GetFingerprint(const ImGG::GradientWidget& w) {
-    GradientFingerprint fp;
-    for (const auto& m : w.gradient().get_marks()) {
-        fp.marks.push_back({ m.position.get(), m.color.x, m.color.y, m.color.z, m.color.w });
-    }
-    return fp;
-}
-
-static GradientFingerprint g_LastFillFp;
-static GradientFingerprint g_LastStrokeFp;
+GradientFingerprint g_LastFillFp;
+GradientFingerprint g_LastStrokeFp;
 
 
 AtlasSettings ConstructSettings();
-void UpdatePreview(const char* text); // Forward checking
+void UpdatePreview(const char* text, bool fullAtlas); // Forward checking
 
-// Header to update the UI texture for pattern preview (Defined here to avoid prototype issues)
-void UpdatePatternPreviewTexture() {
-    if (g_PatternPath.empty()) return;
-    
-    std::vector<uint8_t> pixels;
-    int w, h;
-    if (BitmapUtils::GetPatternPixels(g_PatternPath, pixels, w, h)) {
-        if (g_PatternPreviewTexture != 0) {
-            glDeleteTextures(1, &g_PatternPreviewTexture);
-            g_PatternPreviewTexture = 0;
-        }
-        
-        glGenTextures(1, &g_PatternPreviewTexture);
-        glBindTexture(GL_TEXTURE_2D, g_PatternPreviewTexture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-    } else {
-        if (g_PatternPreviewTexture != 0) {
-            glDeleteTextures(1, &g_PatternPreviewTexture);
-            g_PatternPreviewTexture = 0;
-        }
-    }
-}
-
-// Implementation of Style Save/Load (simplified)
-static void SaveStyle(const std::string& path) {
-    std::ofstream out(path);
-    if (!out.is_open()) return;
-    
-    out << "{\n";
-    out << "  \"fontSize\": " << g_FontSize << ",\n";
-    out << "  \"padding\": " << g_Padding << ",\n";
-    out << "  \"atlasWidth\": " << g_AtlasWidth << ",\n";
-    out << "  \"atlasHeight\": " << g_AtlasHeight << ",\n";
-    out << "  \"fillColor\": [" << g_FillColor[0] << ", " << g_FillColor[1] << ", " << g_FillColor[2] << ", " << g_FillColor[3] << "],\n";
-    
-    out << "  \"enableGradient\": " << (g_EnableGradient ? "true" : "false") << ",\n";
-    out << "  \"fillGradientType\": " << g_FillGradientType << ",\n";
-    out << "  \"fillGradientAngle\": " << g_FillGradientAngle << ",\n";
-    out << "  \"fillGradientStops\": [";
-    {
-        auto marks = g_FillGradientWidget.gradient().get_marks();
-        bool first = true;
-        for(const auto& m : marks) {
-            if(!first) out << ", ";
-            out << "{ \"p\": " << m.position.get() << ", \"c\": [" << m.color.x << ", " << m.color.y << ", " << m.color.z << ", " << m.color.w << "] }";
-            first = false;
-        }
-    }
-    out << "],\n";
-    
-    out << "  \"enableStroke\": " << (g_EnableStroke ? "true" : "false") << ",\n";
-    out << "  \"strokeWidth\": " << g_StrokeWidth << ",\n";
-    out << "  \"strokeColor\": [" << g_StrokeColor[0] << ", " << g_StrokeColor[1] << ", " << g_StrokeColor[2] << ", " << g_StrokeColor[3] << "],\n";
-    out << "  \"strokeJoinStyle\": " << g_StrokeJoinStyle << ",\n";
-    out << "  \"strokeMiterLimit\": " << g_StrokeMiterLimit << ",\n";
-    
-    out << "  \"enableStrokeGradient\": " << (g_EnableStrokeGradient ? "true" : "false") << ",\n";
-    out << "  \"strokeGradientType\": " << g_StrokeGradientType << ",\n";
-    out << "  \"strokeGradientAngle\": " << g_StrokeGradientAngle << ",\n";
-    out << "  \"strokeGradientStops\": [";
-    {
-        auto marks = g_StrokeGradientWidget.gradient().get_marks();
-        bool first = true;
-        for(const auto& m : marks) {
-            if(!first) out << ", ";
-            out << "{ \"p\": " << m.position.get() << ", \"c\": [" << m.color.x << ", " << m.color.y << ", " << m.color.z << ", " << m.color.w << "] }";
-            first = false;
-        }
-    }
-    out << "],\n";
-    
-    out << "  \"enableShadow\": " << (g_EnableShadow ? "true" : "false") << ",\n";
-    out << "  \"shadowOffsetX\": " << g_ShadowOffsetX << ",\n";
-    out << "  \"shadowOffsetY\": " << g_ShadowOffsetY << ",\n";
-    out << "  \"shadowBlur\": " << g_ShadowBlur << ",\n";
-    out << "  \"shadowColor\": [" << g_ShadowColor[0] << ", " << g_ShadowColor[1] << ", " << g_ShadowColor[2] << ", " << g_ShadowColor[3] << "],\n";
-
-    out << "  \"enableInnerGlow\": " << (g_EnableInnerGlow ? "true" : "false") << ",\n";
-    out << "  \"innerGlowSize\": " << g_InnerGlowSize << ",\n";
-    out << "  \"innerGlowChoke\": " << g_InnerGlowChoke << ",\n";
-    out << "  \"innerGlowColor\": [" << g_InnerGlowColor[0] << ", " << g_InnerGlowColor[1] << ", " << g_InnerGlowColor[2] << ", " << g_InnerGlowColor[3] << "],\n";
-    out << "  \"innerGlowBlendMode\": " << g_InnerGlowBlendMode << ",\n";
-    
-    out << "  \"enableBevel\": " << (g_EnableBevel ? "true" : "false") << ",\n";
-    out << "  \"bevelDistance\": " << g_BevelDistance << ",\n";
-    out << "  \"bevelAngle\": " << g_BevelAngle << ",\n";
-    out << "  \"bevelSpread\": " << g_BevelSpread << ",\n";
-    out << "  \"bevelStrength\": " << g_BevelStrength << ",\n";
-    out << "  \"bevelType\": " << g_BevelType << ",\n";
-    out << "  \"bevelHighlightColor\": [" << g_BevelHighlightColor[0] << ", " << g_BevelHighlightColor[1] << ", " << g_BevelHighlightColor[2] << ", " << g_BevelHighlightColor[3] << "],\n";
-    out << "  \"bevelShadowColor\": [" << g_BevelShadowColor[0] << ", " << g_BevelShadowColor[1] << ", " << g_BevelShadowColor[2] << ", " << g_BevelShadowColor[3] << "],\n";
-    
-    // Pattern
-    out << "  \"enablePattern\": " << (g_EnablePattern ? "true" : "false") << ",\n";
-    {
-        std::string pathAndIndex = ""; // Not used, just logic
-        std::string savePath = !g_OriginalPatternPath.empty() ? g_OriginalPatternPath : g_PatternPath;
-        
-        std::string escapedPath;
-        for(char c : savePath) {
-            if(c == '\\') escapedPath += "\\\\";
-            else escapedPath += c;
-        }
-        out << "  \"patternPath\": \"" << escapedPath << "\",\n";
-        out << "  \"patternIndex\": " << g_SelectedPatternIndex << ",\n";
-    }
-    out << "  \"patternOpacity\": " << g_PatternOpacity << ",\n";
-    out << "  \"patternAngle\": " << g_PatternAngle << ",\n";
-    out << "  \"patternScale\": " << g_PatternScale << ",\n";
-    out << "  \"patternBlendMode\": " << g_PatternBlendMode << ",\n";
-    out << "  \"patternMappingMode\": " << g_PatternMappingMode << ",\n";
-
-    out << "  \"exportFilename\": \"" << g_ExportFilename << "\",\n";
-    {
-        std::string escaped;
-        for(char c : g_ExportPath) {
-            if(c == '\\') escaped += "\\\\";
-            else escaped += c;
-        }
-        out << "  \"exportPath\": \"" << escaped << "\",\n";
-    }
-    out << "  \"ssaaFactor\": " << g_SSAAFactor << ",\n";
-    out << "  \"hintingMode\": " << g_HintingMode << ",\n";
-    
-    // Font Path
-    if (g_SelectedFontIndex >= 0 && g_SelectedFontIndex < (int)g_SystemFonts.size()) {
-        std::string fp = g_SystemFonts[g_SelectedFontIndex].path;
-        std::string escaped;
-        for(char c : fp) {
-            if(c == '\\') escaped += "\\\\";
-            else escaped += c;
-        }
-        out << "  \"fontPath\": \"" << escaped << "\",\n";
-    }
-
-    // Fallback Font Path
-    if (g_SelectedFallbackFontIndex >= 0 && g_SelectedFallbackFontIndex < (int)g_SystemFonts.size()) {
-        std::string ffp = g_SystemFonts[g_SelectedFallbackFontIndex].path;
-        std::string ffescaped;
-        for(char c : ffp) {
-            if(c == '\\') ffescaped += "\\\\";
-            else ffescaped += c;
-        }
-        out << "  \"fallbackFontPath\": \"" << ffescaped << "\",\n";
-    }
-    
-    // Excluded Glyphs
-    out << "  \"excludedGlyphs\": [";
-    bool firstEx = true;
-    for(uint32_t code : g_ExcludedGlyphs) {
-        if(!firstEx) out << ", ";
-        out << code;
-        firstEx = false;
-    }
-    out << "],\n";
-    
-    // Custom Glyphs
-    out << "  \"useCustomGlyphs\": true,\n";
-    std::string escCustom;
-    for(char c : g_CustomGlyphsText) {
-        if(c == '\\') escCustom += "\\\\";
-        else if(c == '"') escCustom += "\\\"";
-        else if(c == '\n') escCustom += "\\n";
-        else escCustom += c;
-    }
-    out << "  \"customGlyphsText\": \"" << escCustom << "\",\n";
-    
-    // Export Format
-    out << "  \"exportFormat\": " << g_ExportFormat << ",\n";
-
-    // Char Adjustments
-    out << "  \"globalXAdvance\": " << g_GlobalXAdvance << ",\n";
-    out << "  \"globalXOffset\": " << g_GlobalXOffset << ",\n";
-    out << "  \"globalYOffset\": " << g_GlobalYOffset << ",\n";
-
-    // Blocks
-    out << "  \"blocks\": [\n";
-    bool first = true;
-    for(const auto& b : g_UnicodeBlocks) {
-        if(b.enabled) {
-            if(!first) out << ",\n";
-            out << "    \"" << b.name << "\"";
-            first = false;
-        }
-    }
-    out << "\n  ]\n";
-    out << "}\n";
-}
-
-
-
-
-void LoadStyle(const std::string& path) {
-    std::ifstream in(path);
-    if (!in.is_open()) return;
-    std::stringstream buffer;
-    buffer << in.rdbuf();
-    std::string c = buffer.str();
-    
-    g_FontSize = Utils::ParseIntValue(c, "fontSize", g_FontSize);
-    g_Padding = Utils::ParseIntValue(c, "padding", g_Padding);
-    g_AtlasWidth = Utils::ParseIntValue(c, "atlasWidth", Utils::ParseIntValue(c, "atlasSize", 1024));
-    g_AtlasHeight = Utils::ParseIntValue(c, "atlasHeight", Utils::ParseIntValue(c, "atlasSize", 1024));
-    
-    Utils::ParseColor4(c, "fillColor", g_FillColor);
-    g_EnableGradient = Utils::ParseBoolValue(c, "enableGradient", g_EnableGradient);
-    
-    g_FillGradientType = Utils::ParseIntValue(c, "fillGradientType", 0);
-    g_FillGradientAngle = Utils::ParseFloatValue(c, "fillGradientAngle", 90.0f);
-    Utils::ParseGradientStops(c, "fillGradientStops", g_FillGradientWidget);
-    
-    g_EnableStroke = Utils::ParseBoolValue(c, "enableStroke", false);
-    g_StrokeWidth = Utils::ParseFloatValue(c, "strokeWidth", 2.0f);
-    Utils::ParseColor4(c, "strokeColor", g_StrokeColor);
-    g_StrokeJoinStyle = Utils::ParseIntValue(c, "strokeJoinStyle", 1);
-    g_StrokeMiterLimit = Utils::ParseFloatValue(c, "strokeMiterLimit", 2.0f);
-    
-    g_EnableStrokeGradient = Utils::ParseBoolValue(c, "enableStrokeGradient", false);
-    g_StrokeGradientType = Utils::ParseIntValue(c, "strokeGradientType", 0);
-    g_StrokeGradientAngle = Utils::ParseFloatValue(c, "strokeGradientAngle", 90.0f);
-    Utils::ParseGradientStops(c, "strokeGradientStops", g_StrokeGradientWidget);
-    
-    g_EnableShadow = Utils::ParseBoolValue(c, "enableShadow", g_EnableShadow);
-    g_ShadowOffsetX = Utils::ParseIntValue(c, "shadowOffsetX", g_ShadowOffsetX);
-    g_ShadowOffsetY = Utils::ParseIntValue(c, "shadowOffsetY", g_ShadowOffsetY);
-    g_ShadowBlur = Utils::ParseIntValue(c, "shadowBlur", g_ShadowBlur);
-    Utils::ParseColor4(c, "shadowColor", g_ShadowColor);
- 
-    g_EnableInnerGlow = Utils::ParseBoolValue(c, "enableInnerGlow", g_EnableInnerGlow);
-    g_InnerGlowSize = Utils::ParseFloatValue(c, "innerGlowSize", g_InnerGlowSize);
-    g_InnerGlowChoke = Utils::ParseFloatValue(c, "innerGlowChoke", g_InnerGlowChoke);
-    Utils::ParseColor4(c, "innerGlowColor", g_InnerGlowColor);
-    g_InnerGlowBlendMode = Utils::ParseIntValue(c, "innerGlowBlendMode", 0);
-
-    g_EnableBevel = Utils::ParseBoolValue(c, "enableBevel", g_EnableBevel);
-    g_BevelDistance = Utils::ParseFloatValue(c, "bevelDistance", g_BevelDistance);
-    g_BevelAngle = Utils::ParseIntValue(c, "bevelAngle", g_BevelAngle);
-    g_BevelSpread = Utils::ParseFloatValue(c, "bevelSpread", g_BevelSpread);
-    g_BevelStrength = Utils::ParseFloatValue(c, "bevelStrength", g_BevelStrength);
-    g_BevelType = Utils::ParseIntValue(c, "bevelType", g_BevelType);
-    Utils::ParseColor4(c, "bevelHighlightColor", g_BevelHighlightColor);
-    Utils::ParseColor4(c, "bevelShadowColor", g_BevelShadowColor);
-
-    // Pattern
-    g_EnablePattern = Utils::ParseBoolValue(c, "enablePattern", false);
-    std::string pPath = Utils::ParseStringValue(c, "patternPath");
-    int pIndex = Utils::ParseIntValue(c, "patternIndex", -1);
-    
-    g_PatternOpacity = Utils::ParseFloatValue(c, "patternOpacity", 1.0f);
-    g_PatternAngle = Utils::ParseFloatValue(c, "patternAngle", 0.0f);
-    g_PatternScale = Utils::ParseFloatValue(c, "patternScale", 1.0f);
-    g_PatternBlendMode = Utils::ParseIntValue(c, "patternBlendMode", 0);
-    g_PatternMappingMode = Utils::ParseIntValue(c, "patternMappingMode", 0);
-    
-    // Pattern Restoration Logic
-    if (g_EnablePattern && !pPath.empty()) {
-        g_SelectedPatternIndex = pIndex; // Preserve index even if missing
-        
-        if (!std::filesystem::exists(pPath)) {
-             g_MissingPatternPath = pPath;
-             g_ShowMissingPatternDialog = true;
-             // Keep enabled but path empty? Or disable?
-             // Keep enabled so user sees they need to fix it.
-             g_PatternPath = ""; 
-        } else {
-             g_OriginalPatternPath = pPath;
-             
-             std::string ext = std::filesystem::path(pPath).extension().string();
-             std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-             
-             if (ext == ".pat" && pIndex >= 0) {
-                 // Autoload PAT
-                 g_LoadedPatterns = PatLoader::Load(pPath);
-                 if (pIndex < (int)g_LoadedPatterns.size()) {
-                     // Regenerate Thumbnails
-                      for (auto& t : g_PatternThumbnails) glDeleteTextures(1, &t);
-                      g_PatternThumbnails.clear();
-                      for (const auto& pat : g_LoadedPatterns) {
-                            GLuint tex = 0;
-                            glGenTextures(1, &tex);
-                            glBindTexture(GL_TEXTURE_2D, tex);
-                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, pat.width, pat.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pat.pixels.data());
-                            g_PatternThumbnails.push_back(tex);
-                      }
-                      
-                      // Extract Specifc
-                      const auto& pat = g_LoadedPatterns[pIndex];
-                      
-                      std::string configDir = Utils::GetConfigDir();
-                      std::string tempPath = (std::filesystem::path(configDir) / "temp_pattern.png").string();
-                      
-                      if (BitmapUtils::SaveImage(tempPath, pat.width, pat.height, pat.pixels)) {
-                          BitmapUtils::ClearPatternCache();
-                          g_PatternPath = tempPath; // Absolute path is better, but this likely implies absolute if configDir is absolute.
-                          // Actually GetConfigDir usually returns absolute.
-                          // Let's stick to what we have or ensure absolute.
-                          g_PatternPath = std::filesystem::absolute(tempPath).string();
-                      }
-                 } else {
-                     // Index OOB
-                     g_MissingPatternPath = pPath + " (Index invalid)";
-                     g_ShowMissingPatternDialog = true;
-                 }
-             } else {
-                 g_PatternPath = pPath;
-                 // Clear old cache just in case
-                 g_LoadedPatterns.clear();
-                 for (auto& t : g_PatternThumbnails) glDeleteTextures(1, &t);
-                 g_PatternThumbnails.clear();
-             }
-        }
-    } else {
-         g_PatternPath = "";
-         g_LoadedPatterns.clear();
-         for(auto& t : g_PatternThumbnails) glDeleteTextures(1, &t);
-         g_PatternThumbnails.clear();
-    }
-    
-    // Refresh pattern preview texture if path valid
-    if (!g_PatternPath.empty() && std::filesystem::exists(g_PatternPath)) {
-        UpdatePatternPreviewTexture();
-    } else {
-        if(g_PatternPreviewTexture) { glDeleteTextures(1, &g_PatternPreviewTexture); g_PatternPreviewTexture=0;}
-    }
-
-    // Legacy support for older styles
-    if (c.find("\"bevelColor\"") != std::string::npos) {
-        float oldCol[3];
-        Utils::ParseColor3(c, "bevelColor", oldCol);
-        g_BevelHighlightColor[0] = oldCol[0];
-        g_BevelHighlightColor[1] = oldCol[1];
-        g_BevelHighlightColor[2] = oldCol[2];
-        g_BevelHighlightColor[3] = 1.0f;
-    }
-    
-    std::string fname = Utils::ParseStringValue(c, "exportFilename");
-    if(!fname.empty()) strncpy(g_ExportFilename, fname.c_str(), sizeof(g_ExportFilename));
-    
-    g_SSAAFactor = Utils::ParseIntValue(c, "ssaaFactor", 1);
-    g_ExportPath = Utils::ParseStringValue(c, "exportPath");
-    // Legacy support for old boolean previewSSAA
-    if (c.find("\"previewSSAA\": true") != std::string::npos) g_SSAAFactor = 2;
-
-    g_HintingMode = Utils::ParseIntValue(c, "hintingMode", 0);
-    
-    // Font Path
-    std::string fp = Utils::ParseStringValue(c, "fontPath");
-    if(!fp.empty()) {
-        for(size_t i=0; i<g_SystemFonts.size(); i++) {
-            if(g_SystemFonts[i].path == fp) {
-                g_SelectedFontIndex = (int)i;
-                g_FontManager.LoadFont(fp);
-                break;
-            }
-        }
-    }
-
-    // Fallback Font Path
-    std::string fbfp = Utils::ParseStringValue(c, "fallbackFontPath");
-    g_SelectedFallbackFontIndex = -1;
-    g_FontManager.ClearFallbackFont();
-    if(!fbfp.empty()) {
-        for(size_t i=0; i<g_SystemFonts.size(); i++) {
-            if(g_SystemFonts[i].path == fbfp) {
-                g_SelectedFallbackFontIndex = (int)i;
-                g_FontManager.LoadFallbackFont(fbfp);
-                break;
-            }
-        }
-    }
-    
-    // Excluded Glyphs
-    g_ExcludedGlyphs.clear();
-    Utils::ParseIntArray(c, "excludedGlyphs", g_ExcludedGlyphs);
-    
-    g_UseCustomGlyphs = true;
-    std::string customText = Utils::ParseStringValue(c, "customGlyphsText");
-    if(!customText.empty()) {
-        g_CustomGlyphsText = customText;
-    }
-    
-    g_ExportFormat = Utils::ParseIntValue(c, "exportFormat", 0);
- 
-    g_GlobalXAdvance = Utils::ParseIntValue(c, "globalXAdvance", 0);
-    g_GlobalXOffset = Utils::ParseIntValue(c, "globalXOffset", 0);
-    g_GlobalYOffset = Utils::ParseIntValue(c, "globalYOffset", 0);
-
-    // Blocks
-    for(auto& b : g_UnicodeBlocks) b.enabled = false;
-    size_t blocksStart = c.find("\"blocks\"");
-    if (blocksStart != std::string::npos) {
-        size_t arrStart = c.find("[", blocksStart);
-        size_t arrEnd = c.find("]", arrStart);
-        if (arrStart != std::string::npos && arrEnd != std::string::npos) {
-            std::string blocksContent = c.substr(arrStart, arrEnd - arrStart);
-            for(auto& b : g_UnicodeBlocks) {
-                if (blocksContent.find("\"" + b.name + "\"") != std::string::npos) {
-                    b.enabled = true;
-                }
-            }
-        }
-    }
-    
-    UpdatePreview(g_InputText);
-    g_LastFillFp = GetFingerprint(g_FillGradientWidget);
-    g_LastStrokeFp = GetFingerprint(g_StrokeGradientWidget);
-}
+// UpdatePatternPreviewTexture moved to Utils/StyleUtils.cpp
+// SaveStyle moved to Utils/StyleUtils.cpp
+// LoadStyle moved to Utils/StyleUtils.cpp
 
 // Toggle favorite status
 void ToggleFavorite(const std::string& fontPath) {
@@ -633,10 +208,27 @@ void ToggleFavorite(const std::string& fontPath) {
     Utils::SaveFavorites(g_FavoriteFonts);
 }
 
+// --- Drag and Drop State ---
+std::string g_PendingDropFile = "";
+
+void DropCallback(GLFWwindow* window, int count, const char** paths) {
+    if (count > 0 && paths[0]) {
+        g_PendingDropFile = paths[0];
+    }
+}
+
 // IsFavorite remains as it's small/local
 bool IsFavorite(const std::string& fontPath) {
     return g_FavoriteFonts.count(fontPath) > 0;
 }
+
+// Globals for Replace Dialog
+static bool g_ShowReplaceGlyphDialog = false;
+static uint32_t g_ReplaceGlyphCode = 0;
+static ReplacedGlyph g_ReplaceGlyphTemp;
+static GLuint g_ReplacePreviewTexture = 0;
+static std::string g_ReplacePreviewError = "";
+static bool g_ReplaceLockAspectRatio = true; // Default to locked
 
 // checker texture helper moved to UIUtils/
 
@@ -669,6 +261,8 @@ AtlasSettings ConstructSettings() {
     settings.hintingMode = g_HintingMode;
     settings.enableKerning = g_EnableKerning;
     
+    settings.replacedGlyphs = g_ReplacedGlyphs;
+
     // Fill
     // Fill
     settings.fillColor[0] = (uint8_t)(g_FillColor[0] * 255);
@@ -834,12 +428,29 @@ void UpdateTextPreview(const char* text) {
     }
 }
 
-void UpdatePreview(const char* text) {
+void UpdatePreview(const char* text, bool fullAtlas) {
     if (!g_FontManager.IsLoaded()) return;
     UpdateTextPreview(text);
-    g_AtlasUpdatePending = true;
-    g_LastInteractionTime = ImGui::GetTime();
+    if (fullAtlas) {
+        g_AtlasUpdatePending = true;
+        g_LastInteractionTime = ImGui::GetTime();
+    }
 }
+
+void UpdateUnicodeBlockSupport() {
+    if (!g_FontManager.IsLoaded()) return;
+    
+    // Check support for each block
+    for (auto& block : g_UnicodeBlocks) {
+        // Skip basic latin (ASCII), assume always supported for UI sanity
+        if (block.name == "Basic Latin") {
+            block.supported = true;
+            continue;
+        }
+        block.supported = g_FontManager.HasAnyGlyph(block.start, block.end);
+    }
+}
+
 
 static void glfw_error_callback(int error, const char* description) {
     fprintf(stderr, "GLFW Error %d: %s\n", error, description);
@@ -885,9 +496,12 @@ int main(int, char**) {
     glfwSetWindowPos(window, winX, winY);
     
     glfwMakeContextCurrent(window);
-    glfwSwapInterval(1);
+    glfwSwapInterval(1); // Enable vsync
 
-    IMGUI_CHECKVERSION();
+    // Register Drop Callback
+    glfwSetDropCallback(window, DropCallback);
+
+    // Initialize OpenGL loaderUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; 
@@ -915,28 +529,39 @@ int main(int, char**) {
     }
 
     if (!bundledFontPath.empty()) {
-        if (io.Fonts->AddFontFromFileTTF(bundledFontPath.c_str(), 18.0f, NULL, ranges.Data)) {
+            io.Fonts->AddFontFromFileTTF(bundledFontPath.c_str(), 16.0f, NULL, ranges.Data);
+            io.Fonts->AddFontFromFileTTF(bundledFontPath.c_str(), 32.0f, NULL, ranges.Data);
+            io.Fonts->AddFontFromFileTTF(bundledFontPath.c_str(), 11.0f, NULL, ranges.Data);
+            io.Fonts->AddFontFromFileTTF(bundledFontPath.c_str(), 20.0f, NULL, ranges.Data);
             fontLoaded = true;
-        }
     }
 
     if (!fontLoaded) {
         #ifdef _WIN32
         const char* winFont = "C:\\Windows\\Fonts\\msyh.ttc";
         if (std::filesystem::exists(winFont)) {
-            io.Fonts->AddFontFromFileTTF(winFont, 18.0f, NULL, ranges.Data);
+            io.Fonts->AddFontFromFileTTF(winFont, 16.0f, NULL, ranges.Data);
+            io.Fonts->AddFontFromFileTTF(winFont, 32.0f, NULL, ranges.Data);
+            io.Fonts->AddFontFromFileTTF(winFont, 11.0f, NULL, ranges.Data);
+            io.Fonts->AddFontFromFileTTF(winFont, 20.0f, NULL, ranges.Data);
             fontLoaded = true;
         } else {
             winFont = "C:\\Windows\\Fonts\\Arial.ttf";
             if (std::filesystem::exists(winFont)) {
-                io.Fonts->AddFontFromFileTTF(winFont, 18.0f, NULL, ranges.Data);
+                io.Fonts->AddFontFromFileTTF(winFont, 16.0f, NULL, ranges.Data);
+                io.Fonts->AddFontFromFileTTF(winFont, 32.0f, NULL, ranges.Data);
+                io.Fonts->AddFontFromFileTTF(winFont, 11.0f, NULL, ranges.Data);
+                io.Fonts->AddFontFromFileTTF(winFont, 20.0f, NULL, ranges.Data);
                 fontLoaded = true;
             }
         }
         #elif defined(__APPLE__)
         const char* macFont = "/System/Library/Fonts/PingFang.ttc";
         if (std::filesystem::exists(macFont)) {
-            io.Fonts->AddFontFromFileTTF(macFont, 18.0f, NULL, ranges.Data);
+            io.Fonts->AddFontFromFileTTF(macFont, 16.0f, NULL, ranges.Data);
+            io.Fonts->AddFontFromFileTTF(macFont, 32.0f, NULL, ranges.Data);
+            io.Fonts->AddFontFromFileTTF(macFont, 11.0f, NULL, ranges.Data);
+            io.Fonts->AddFontFromFileTTF(macFont, 20.0f, NULL, ranges.Data);
             fontLoaded = true;
         }
         #endif
@@ -958,6 +583,10 @@ int main(int, char**) {
     if (!g_FontManager.Initialize()) {
         printf("Failed to init FontManager\n");
     }
+    // Initialize Settings
+    Utils::SettingsManager::Get().Load();
+    Utils::ThemeManager::ApplyTheme(Utils::SettingsManager::Get().GetTheme());
+
     g_SystemFonts = Utils::GetSystemFonts();
     Utils::LoadFavorites(g_FavoriteFonts); // Load favorite fonts
     Utils::LoadRecentStyles(g_RecentStyles);
@@ -1016,13 +645,22 @@ int main(int, char**) {
         
         // Main Menu
         float menuHeight = 0;
+        
+        // Use 20px font (Index 3) for Menu
+        bool pushedMenuFont = false;
+        if (io.Fonts->Fonts.Size > 3) {
+            ImGui::PushFont(io.Fonts->Fonts[3]);
+            pushedMenuFont = true;
+        }
+
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(5, 8)); // Increase menu bar height bit via padding
         if (ImGui::BeginMainMenuBar()) {
             menuHeight = ImGui::GetWindowSize().y;
             if (ImGui::BeginMenu("File")) {
                 if (ImGui::MenuItem("Import Project...")) {
                      std::string file = Utils::PickFileDialog("JSON Project\0*.json\0");
                      if (!file.empty()) {
-                         LoadStyle(file);
+                         Utils::LoadStyle(file);
                          Utils::AddRecentStyle(g_RecentStyles, file);
                      }
                 }
@@ -1030,7 +668,7 @@ int main(int, char**) {
                      std::string file = Utils::SaveFileDialog("JSON Project\0*.json\0", "project.json");
                      if (!file.empty()) {
                          if(file.find(".json") == std::string::npos) file += ".json";
-                         SaveStyle(file);
+                         Utils::SaveStyle(file);
                          Utils::AddRecentStyle(g_RecentStyles, file);
                      }
                 }
@@ -1050,7 +688,7 @@ int main(int, char**) {
                             if(ImGui::MenuItem(s.c_str())) {
                                 std::ifstream fcheck(s);
                                 if(fcheck.good()) {
-                                    LoadStyle(s);
+                                    Utils::LoadStyle(s);
                                     Utils::AddRecentStyle(g_RecentStyles, s);
                                 } else {
                                     g_RecentNotFoundPath = s;
@@ -1074,12 +712,19 @@ int main(int, char**) {
             }
             ImGui::EndMainMenuBar();
         }
+        ImGui::PopStyleVar();
+        
+        if (pushedMenuFont) {
+            ImGui::PopFont();
+        }
 
         // Main Window
         {
             ImGui::SetNextWindowPos(ImVec2(0, menuHeight));
             ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, io.DisplaySize.y - menuHeight));
-            ImGui::Begin("Main", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f); // Remove rounding for root window
+            ImGui::Begin("Main", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
+            ImGui::PopStyleVar();
 
             // Left Panel (Settings)
             ImGui::BeginChild("Settings", ImVec2(300, 0), true);
@@ -1099,7 +744,10 @@ int main(int, char**) {
             
             UI::RenderFontSelector("##Font", "##FontSelector", g_SelectedFontIndex, g_SystemFonts, g_FavoriteFonts, 
                 g_FontSearch, IM_ARRAYSIZE(g_FontSearch), g_FontManager, false, g_ShowFontPreview, 
-                onUpdate, onFav);
+                [&]() { 
+                    UpdatePreview(g_InputText); 
+                    UpdateUnicodeBlockSupport(); 
+                }, onFav);
             
             ImGui::Spacing();
 
@@ -1107,7 +755,10 @@ int main(int, char**) {
             ImGui::Text("Fallback Font:");
             UI::RenderFontSelector("##Fallback", "##FallbackFontSelector", g_SelectedFallbackFontIndex, g_SystemFonts, g_FavoriteFonts,
                 g_FallbackFontSearch, IM_ARRAYSIZE(g_FallbackFontSearch), g_FontManager, true, g_ShowFontPreview,
-                onUpdate, onFav);
+                [&]() { 
+                    UpdatePreview(g_InputText); 
+                    UpdateUnicodeBlockSupport(); 
+                }, onFav);
             
             ImGui::Separator();
 
@@ -1224,6 +875,7 @@ int main(int, char**) {
                 
                 ImGui::BeginChild("BlocksList", ImVec2(0, 150), true);
                 for (auto& block : g_UnicodeBlocks) {
+                    if (!block.supported) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
                     if (ImGui::Checkbox(block.name.c_str(), &block.enabled)) {
                         // 1. Get current characters
                         std::vector<uint32_t> currentChars = Utils::DecodeUtf8(g_CustomGlyphsText.c_str());
@@ -1256,6 +908,7 @@ int main(int, char**) {
                         g_CustomGlyphsText = Utils::EncodeUtf8(nextChars);
                         UpdatePreview(g_InputText);
                     }
+                    if (!block.supported) ImGui::PopStyleColor();
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("U+%04X - U+%04X", block.start, block.end);
                     }
@@ -1339,15 +992,11 @@ int main(int, char**) {
                 }
             };
 
-            if (g_EnableStroke) {
-                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.35f, 0.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.45f, 0.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.0f, 0.55f, 0.0f, 1.0f));
-            } else {
-                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.15f, 0.25f, 0.35f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.35f, 0.50f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.45f, 0.65f, 1.0f));
-            }
+            Utils::EffectThemeColors strokeColors = Utils::ThemeManager::GetEffectColors(g_EnableStroke);
+            ImGui::PushStyleColor(ImGuiCol_Header, strokeColors.Header);
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, strokeColors.HeaderHovered);
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, strokeColors.HeaderActive);
+            ImGui::PushStyleColor(ImGuiCol_Text, strokeColors.Text);
             float strokeHStart = ImGui::GetCursorPosY();
             ImGui::SetNextItemAllowOverlap(); // Vital for the checkbox to work!
             
@@ -1361,14 +1010,14 @@ int main(int, char**) {
             }
 
             float strokeHEnd = ImGui::GetCursorPosY();
-            ImGui::PopStyleColor(3);
+            ImGui::PopStyleColor(4);
 
             // Checkbox on top
             ImGui::SetCursorPos(ImVec2(ImGui::GetContentRegionMax().x - 30, strokeHStart));
             RenderFlash("Outline", ImGui::GetCursorScreenPos(), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
 
             ImGui::PushID("EnableOutlineCheck");
-            ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_CheckMark, strokeColors.CheckMark);
             if (ImGui::Checkbox("##EnableOutline", &g_EnableStroke)) {
                 UpdatePreview(g_InputText);
             }
@@ -1404,15 +1053,11 @@ int main(int, char**) {
             }
 
             ImGui::Separator();
-            if (g_EnableShadow) {
-                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.35f, 0.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.45f, 0.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.0f, 0.55f, 0.0f, 1.0f));
-            } else {
-                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.15f, 0.25f, 0.35f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.35f, 0.50f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.45f, 0.65f, 1.0f));
-            }
+            Utils::EffectThemeColors shadowColors = Utils::ThemeManager::GetEffectColors(g_EnableShadow);
+            ImGui::PushStyleColor(ImGuiCol_Header, shadowColors.Header);
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, shadowColors.HeaderHovered);
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, shadowColors.HeaderActive);
+            ImGui::PushStyleColor(ImGuiCol_Text, shadowColors.Text);
             float shadowHStart = ImGui::GetCursorPosY();
             ImGui::SetNextItemAllowOverlap();
             
@@ -1425,13 +1070,13 @@ int main(int, char**) {
             }
 
             float shadowHEnd = ImGui::GetCursorPosY();
-            ImGui::PopStyleColor(3);
+            ImGui::PopStyleColor(4);
 
             ImGui::SetCursorPos(ImVec2(ImGui::GetContentRegionMax().x - 30, shadowHStart));
             RenderFlash("Shadow", ImGui::GetCursorScreenPos(), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
 
             ImGui::PushID("EnableShadowCheck");
-            ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_CheckMark, shadowColors.CheckMark);
             if (ImGui::Checkbox("##EnableShadow", &g_EnableShadow)) {
                 UpdatePreview(g_InputText);
             }
@@ -1446,15 +1091,11 @@ int main(int, char**) {
                 if (ImGui::ColorEdit4("Color##Shadow", g_ShadowColor)) UpdatePreview(g_InputText);
             }
             
-            if (g_EnableBevel) {
-                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.35f, 0.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.45f, 0.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.0f, 0.55f, 0.0f, 1.0f));
-            } else {
-                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.15f, 0.25f, 0.35f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.35f, 0.50f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.45f, 0.65f, 1.0f));
-            }
+            Utils::EffectThemeColors bevelColors = Utils::ThemeManager::GetEffectColors(g_EnableBevel);
+            ImGui::PushStyleColor(ImGuiCol_Header, bevelColors.Header);
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, bevelColors.HeaderHovered);
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, bevelColors.HeaderActive);
+            ImGui::PushStyleColor(ImGuiCol_Text, bevelColors.Text);
             float bevelHStart = ImGui::GetCursorPosY();
             ImGui::SetNextItemAllowOverlap();
             
@@ -1467,13 +1108,13 @@ int main(int, char**) {
             }
 
             float bevelHEnd = ImGui::GetCursorPosY();
-            ImGui::PopStyleColor(3);
+            ImGui::PopStyleColor(4);
 
             ImGui::SetCursorPos(ImVec2(ImGui::GetContentRegionMax().x - 30, bevelHStart));
             RenderFlash("Bevel", ImGui::GetCursorScreenPos(), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
 
             ImGui::PushID("EnableBevelCheck");
-            ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_CheckMark, bevelColors.CheckMark);
             if (ImGui::Checkbox("##EnableBevel", &g_EnableBevel)) {
                 UpdatePreview(g_InputText);
             }
@@ -1494,15 +1135,11 @@ int main(int, char**) {
                 if (ImGui::ColorEdit4("Shadow color##Bevel", g_BevelShadowColor)) UpdatePreview(g_InputText);
             }
             
-            if (g_EnableInnerGlow) {
-                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.35f, 0.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.45f, 0.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.0f, 0.55f, 0.0f, 1.0f));
-            } else {
-                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.15f, 0.25f, 0.35f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.35f, 0.50f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.45f, 0.65f, 1.0f));
-            }
+            Utils::EffectThemeColors glowColors = Utils::ThemeManager::GetEffectColors(g_EnableInnerGlow);
+            ImGui::PushStyleColor(ImGuiCol_Header, glowColors.Header);
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, glowColors.HeaderHovered);
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, glowColors.HeaderActive);
+            ImGui::PushStyleColor(ImGuiCol_Text, glowColors.Text);
             float glowHStart = ImGui::GetCursorPosY();
             ImGui::SetNextItemAllowOverlap();
             
@@ -1515,13 +1152,13 @@ int main(int, char**) {
             }
 
             float glowHEnd = ImGui::GetCursorPosY();
-            ImGui::PopStyleColor(3);
+            ImGui::PopStyleColor(4);
 
             ImGui::SetCursorPos(ImVec2(ImGui::GetContentRegionMax().x - 30, glowHStart));
             RenderFlash("InnerGlow", ImGui::GetCursorScreenPos(), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
 
             ImGui::PushID("EnableGlowCheck");
-            ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_CheckMark, glowColors.CheckMark);
             if (ImGui::Checkbox("##EnableInnerGlow", &g_EnableInnerGlow)) {
                 UpdatePreview(g_InputText);
             }
@@ -1538,15 +1175,11 @@ int main(int, char**) {
             }
 
             // Pattern Overlay
-            if (g_EnablePattern) {
-                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.35f, 0.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.45f, 0.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.0f, 0.55f, 0.0f, 1.0f));
-            } else {
-                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.15f, 0.25f, 0.35f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.35f, 0.50f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.25f, 0.45f, 0.65f, 1.0f));
-            }
+            Utils::EffectThemeColors patternColors = Utils::ThemeManager::GetEffectColors(g_EnablePattern);
+            ImGui::PushStyleColor(ImGuiCol_Header, patternColors.Header);
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, patternColors.HeaderHovered);
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, patternColors.HeaderActive);
+            ImGui::PushStyleColor(ImGuiCol_Text, patternColors.Text);
             float patternHStart = ImGui::GetCursorPosY();
             ImGui::SetNextItemAllowOverlap();
             
@@ -1559,13 +1192,13 @@ int main(int, char**) {
             }
 
             float patternHEnd = ImGui::GetCursorPosY();
-            ImGui::PopStyleColor(3);
+            ImGui::PopStyleColor(4);
 
             ImGui::SetCursorPos(ImVec2(ImGui::GetContentRegionMax().x - 30, patternHStart));
             RenderFlash("Pattern", ImGui::GetCursorScreenPos(), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
             
             ImGui::PushID("EnablePatternCheck");
-            ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_CheckMark, patternColors.CheckMark);
             if (ImGui::Checkbox("##EnablePattern", &g_EnablePattern)) {
                 UpdatePreview(g_InputText);
             }
@@ -1641,7 +1274,7 @@ int main(int, char**) {
                                 g_OriginalPatternPath = path;
                                 g_SelectedPatternIndex = -1;
                                 g_PatternPath = path;
-                                UpdatePatternPreviewTexture();
+                                Utils::UpdatePatternPreviewTexture();
                                 UpdatePreview(g_InputText);
                             }
                         }
@@ -1735,7 +1368,7 @@ int main(int, char**) {
             
             ImGui::Separator();
             ImGui::Separator();
-            ImGui::Text("Char Adjustments");
+            ImGui::Text("Global Char Adjustments");
             if (ImGui::DragInt("xAdvance##Global", &g_GlobalXAdvance, 1, -100, 100)) UpdatePreview(g_InputText);
             if (ImGui::DragInt("xOffset##Global", &g_GlobalXOffset, 1, -100, 100)) UpdatePreview(g_InputText);
             if (ImGui::DragInt("yOffset##Global", &g_GlobalYOffset, 1, -100, 100)) UpdatePreview(g_InputText);
@@ -1796,9 +1429,9 @@ int main(int, char**) {
 
                     // BG Checkered
                     if (g_PreviewBgColor[3] == 0.0f && g_CheckerTexture) {
-                         draw_list->AddImage((void*)(intptr_t)g_CheckerTexture, p_min, p_max, ImVec2(0,0), ImVec2(canvas_sz.x / 32.0f, canvas_sz.y / 32.0f));
+                         draw_list->AddImage((void*)(intptr_t)g_CheckerTexture, p_min, p_max, ImVec2(0,0), ImVec2(canvas_sz.x / 32.0f, canvas_sz.y / 32.0f), ImColor(1.0f, 1.0f, 1.0f, g_AtlasCheckerOpacity));
                     } else if (g_PreviewBgColor[3] != 0.0f) {
-                         draw_list->AddRectFilled(p_min, p_max, ImColor(g_PreviewBgColor[0], g_PreviewBgColor[1], g_PreviewBgColor[2], 1.0f));
+                         draw_list->AddRectFilled(p_min, p_max, ImColor(g_PreviewBgColor[0], g_PreviewBgColor[1], g_PreviewBgColor[2], g_AtlasCheckerOpacity));
                     }
 
                     // Interaction & Display
@@ -1861,7 +1494,19 @@ int main(int, char**) {
                     // Toolbar
                     ImGui::TextDisabled("Atlas Preview");
                     ImGui::SameLine();
-                    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 200);
+                    
+                    // Controls right-aligned
+                    float rightControlsWidth = 360.0f;
+                    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - rightControlsWidth);
+                    
+                    ImGui::SetNextItemWidth(100);
+                    float opacityPct = g_AtlasCheckerOpacity * 100.0f;
+                    if (ImGui::SliderFloat("##CheckerOpacity", &opacityPct, 0.0f, 100.0f, "Bg Op: %.0f%%")) {
+                        g_AtlasCheckerOpacity = opacityPct / 100.0f;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Background Opacity");
+
+                    ImGui::SameLine();
                     ImGui::Text("Scale: %d%%", (int)(g_AtlasZoom * 100));
                     ImGui::SameLine();
                     if (ImGui::SmallButton("1:1")) { g_AtlasZoom = 1.0f; g_AtlasPan = {0,0}; }
@@ -1886,9 +1531,9 @@ int main(int, char**) {
 
                     // BG Checkered
                     if (g_PreviewBgColor[3] == 0.0f && g_CheckerTexture) {
-                         draw_list->AddImage((void*)(intptr_t)g_CheckerTexture, p_min, p_max, ImVec2(0,0), ImVec2(canvas_sz.x / 32.0f, canvas_sz.y / 32.0f));
+                         draw_list->AddImage((void*)(intptr_t)g_CheckerTexture, p_min, p_max, ImVec2(0,0), ImVec2(canvas_sz.x / 32.0f, canvas_sz.y / 32.0f), ImColor(1.0f, 1.0f, 1.0f, g_AtlasCheckerOpacity));
                     } else if (g_PreviewBgColor[3] != 0.0f) {
-                         draw_list->AddRectFilled(p_min, p_max, ImColor(g_PreviewBgColor[0], g_PreviewBgColor[1], g_PreviewBgColor[2], 1.0f));
+                         draw_list->AddRectFilled(p_min, p_max, ImColor(g_PreviewBgColor[0], g_PreviewBgColor[1], g_PreviewBgColor[2], g_AtlasCheckerOpacity));
                     }
 
                     // Atlas Interaction & Display
@@ -2035,6 +1680,43 @@ int main(int, char**) {
                                          ImGui::OpenPopup("GlyphContext");
                                      }
                                  }
+                                 
+                                 // Handle Drag and Drop on Glyph
+                                 if (!g_PendingDropFile.empty()) {
+                                     // We consume the drop IF it is relevant (on a glyph)
+                                     // But since we are inside the Texture loop, if we find a hover, we take it.
+                                     // Wait, we need to know if the drop position (mouse) was inside this specific glyph?
+                                     // The drop callback sets the file, but where was the mouse?
+                                     // Standard behavior: The drop happens at current mouse position.
+                                     // So we can check hoveredIndex here.
+                                     
+                                     if (hoveredIndex != -1) {
+                                         const auto& g = g_LastAtlas.glyphs[hoveredIndex];
+                                         
+                                         // Open Replace Dialog
+                                         ReplacedGlyph rg;
+                                         bool isNew = true;
+                                          if (g_ReplacedGlyphs.count(g.charCode)) {
+                                             rg = g_ReplacedGlyphs[g.charCode];
+                                             isNew = false;
+                                         }
+                                         
+                                         // Update Image Path from Drop
+                                         rg.imagePath = g_PendingDropFile;
+                                         // Reset dimensions to 0 to trigger auto-size on next load if desired, 
+                                         // OR keep existing preferences. 
+                                         // Usually new image means new dimensions.
+                                         if(isNew) {
+                                             rg.width = 0; 
+                                             rg.height = 0;
+                                         }
+                                         
+                                         UI::ReplaceGlyphDialog::Open(g.charCode, rg, isNew);
+                                         g_ShowReplaceGlyphDialog = true;
+                                         
+                                         g_PendingDropFile = ""; // Consumed
+                                     }
+                                 }
                              }
                              currentX += pW + spacing;
                         }
@@ -2095,6 +1777,27 @@ int main(int, char**) {
                                      UpdatePreview(g_InputText);
                                      g_SelectedGlyphIndex = -1;
                                  }
+                                 
+                                 std::string menuLabel = "Replace with Image";
+                                 if (g_ReplacedGlyphs.count(g.charCode)) {
+                                     menuLabel = "Edit Image Replacement";
+                                 }
+
+                                 if (ImGui::MenuItem(menuLabel.c_str())) {
+                                     ReplacedGlyph existing;
+                                     bool isNew = true;
+                                     if (g_ReplacedGlyphs.count(g.charCode)) {
+                                         existing = g_ReplacedGlyphs[g.charCode];
+                                         isNew = false; 
+                                     }
+                                     UI::ReplaceGlyphDialog::Open(g.charCode, existing, isNew);
+                                     g_ShowReplaceGlyphDialog = true;
+                                 }
+                                 
+                                 if (ImGui::MenuItem("Copy Character")) {
+                                     std::string utf8 = Utils::EncodeUtf8({g.charCode});
+                                     ImGui::SetClipboardText(utf8.c_str());
+                                 }
                             }
                             ImGui::EndPopup();
                         }
@@ -2152,13 +1855,83 @@ int main(int, char**) {
             g_RequestPatternPopup = false;
         }
 
-        // Center Modal
+        // Center Modal (Generic)
         ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         
         // Limit height to 85% of screen and allow scrolling if needed
         float maxY = ImGui::GetMainViewport()->WorkSize.y * 0.85f;
         ImGui::SetNextWindowSizeConstraints(ImVec2(200, 100), ImVec2(FLT_MAX, maxY));
+
+        if (g_ShowReplaceGlyphDialog) {
+             // Position Replace Glyph at 95% width (Right side)
+             float targetX = ImGui::GetMainViewport()->WorkPos.x + ImGui::GetMainViewport()->WorkSize.x * 0.95f;
+             ImGui::SetNextWindowPos(ImVec2(targetX, center.y), ImGuiCond_Appearing, ImVec2(1.0f, 0.5f));
+             ImGui::OpenPopup("Replace Glyph"); 
+        } else if (g_ShowPatternSelector || g_ShowMissingPatternDialog || g_ShowRecentError) {
+             // Center others
+             ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        }
+        
+        {
+             bool saved = false;
+             bool removed = false;
+             ReplacedGlyph rep;
+             uint32_t code = 0;
+             AtlasSettings settings = ConstructSettings();
+             
+             // Backup mechanism for Cancel support
+             static bool s_BackupValid = false;
+             static uint32_t s_BackupCode = 0;
+             static ReplacedGlyph s_BackupGlyph;
+             static bool s_BackupExists = false;
+             
+             // Detect when dialog JUST opened (not easy here since g_Show is true across frames)
+             // But distinct 'Open' call in ReplaceGlyphDialog sets internal state.
+             // We can use a separate flag or hook into Open.
+             // For now, simpler: we assume if we start modifying via LiveUpdate, we should have a backup.
+             
+             auto onLiveUpdate = [&](uint32_t charCode, const ReplacedGlyph& tempRep) {
+                     if (!s_BackupValid) {
+                         s_BackupCode = charCode;
+                         if (g_ReplacedGlyphs.count(charCode)) {
+                             s_BackupGlyph = g_ReplacedGlyphs[charCode];
+                             s_BackupExists = true;
+                         } else {
+                             s_BackupExists = false;
+                         }
+                         s_BackupValid = true;
+                     }
+                     
+                     g_ReplacedGlyphs[charCode] = tempRep;
+                     UpdatePreview(g_InputText, false); // Only text preview
+                 };
+
+             bool wasOpen = g_ShowReplaceGlyphDialog;
+             UI::ReplaceGlyphDialog::Show(&g_ShowReplaceGlyphDialog, settings, rep, code, saved, removed, onLiveUpdate);
+             
+             if (saved) {
+                 // Committed.
+                 g_ReplacedGlyphs[code] = rep;
+                 UpdatePreview(g_InputText); 
+                 s_BackupValid = false; // Reset backup
+             } else if (removed) {
+                 g_ReplacedGlyphs.erase(code);
+                 UpdatePreview(g_InputText);
+                 s_BackupValid = false;
+             } else if (wasOpen && !g_ShowReplaceGlyphDialog) {
+                 // Cancelled (Closed without Save/Remove)
+                 if (s_BackupValid) {
+                     // Restore
+                     if (s_BackupExists) {
+                         g_ReplacedGlyphs[s_BackupCode] = s_BackupGlyph;
+                     } else {
+                         g_ReplacedGlyphs.erase(s_BackupCode);
+                     }
+                     UpdatePreview(g_InputText);
+                 }
+                 s_BackupValid = false;
+             }
+        }
 
         if (ImGui::BeginPopupModal("Select Pattern", &g_ShowPatternSelector, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("Choose a pattern from the file:");
@@ -2188,7 +1961,7 @@ int main(int, char**) {
                         BitmapUtils::ClearPatternCache(); // Force reload
                         g_PatternPath = std::filesystem::absolute(tempPath).string();
                         
-                        UpdatePatternPreviewTexture();
+                        Utils::UpdatePatternPreviewTexture();
                         UpdatePreview(g_InputText);
                     } else {
                         // Handle error?
@@ -2274,7 +2047,7 @@ int main(int, char**) {
                         }
                         
                         if (!g_PatternPath.empty()) {
-                            UpdatePatternPreviewTexture();
+                            Utils::UpdatePatternPreviewTexture();
                             UpdatePreview(g_InputText);
                         }
                         ImGui::CloseCurrentPopup();
@@ -2317,41 +2090,17 @@ int main(int, char**) {
         }
 
         // Handle Preferences Popup
-        if (g_OpenPreferences) {
-            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-            ImGui::OpenPopup("PreferencesPopup");
-            g_OpenPreferences = false;
-        }
-        if (ImGui::BeginPopupModal("PreferencesPopup", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("Application Preferences");
-            ImGui::Separator();
-            
-            const char* ssaaOptions[] = { "Standard (1x)", "High Quality (2x)", "Ultra Quality (4x)" };
-            int ssaaIdx = 0;
-            if (g_SSAAFactor == 2) ssaaIdx = 1;
-            else if (g_SSAAFactor == 4) ssaaIdx = 2;
-
-            if (ImGui::Combo("Default Preview Quality", &ssaaIdx, ssaaOptions, IM_ARRAYSIZE(ssaaOptions))) {
-                if (ssaaIdx == 0) g_SSAAFactor = 1;
-                else if (ssaaIdx == 1) g_SSAAFactor = 2;
-                else if (ssaaIdx == 2) g_SSAAFactor = 4;
-                UpdatePreview(g_InputText);
-            }
-            
-            ImGui::Checkbox("Show Font Previews in List", &g_ShowFontPreview);
-            
-            ImGui::Separator();
-            if (ImGui::Button("Close", ImVec2(120, 0))) {
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndPopup();
-        }
+        UI::PreferencesPopup::Show(&g_OpenPreferences, &g_SSAAFactor, &g_ShowFontPreview, &g_ShowRecentError);
 
         ExportDialog::RenderDialog();
         ExportDialog::RenderSuccessNotification();
         FontInfoDialog::RenderDialog(g_FontManager);
 
         ImGui::Render();
+        
+        // Clear pending drop if handled or ignored this frame
+        if (!g_PendingDropFile.empty()) g_PendingDropFile = "";
+
         int display_w, display_h;
         glfwGetFramebufferSize(window, &display_w, &display_h);
         glViewport(0, 0, display_w, display_h);

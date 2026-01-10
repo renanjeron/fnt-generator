@@ -2,6 +2,7 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <map>
 #include "../Font/FontManager.h"
 #include "../Utils/BitmapUtils.h"
 
@@ -50,6 +51,10 @@ struct AtlasResult {
     };
     std::vector<KerningPair> kernings;
 };
+
+#include "../Utils/Structs.h"
+
+// --- Structures ---
 
 // --- Structures ---
 // GradientStop, GradientType, GradientData are now in BitmapUtils.h
@@ -123,6 +128,9 @@ struct AtlasSettings {
 
     // Kerning Control
     bool enableKerning = true;
+
+    // Replaced Glyphs
+    std::map<uint32_t, ReplacedGlyph> replacedGlyphs;
 };
 
 class TextureGenerator {

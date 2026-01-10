@@ -107,4 +107,18 @@ namespace BitmapUtils {
     void FillRect(std::vector<uint8_t>& dest, int destW, int destH, 
                   int rx, int ry, int rw, int rh, const uint8_t color[4]);
 
+    // Blits an RGBA image onto the destination buffer.
+    void BlitImage(std::vector<uint8_t>& dest, int destW, int destH, 
+                   int x, int y, 
+                   const std::vector<uint8_t>& srcPixels, int srcW, int srcH);
+    
+    // Resizes an RGBA image.
+    void ResizeImage(const std::vector<uint8_t>& src, int srcW, int srcH, 
+                     std::vector<uint8_t>& dest, int destW, int destH);
+
+    // Dilates an alpha channel (single byte per pixel) by the specified radius.
+    // Returns a new buffer with dimensions (w + 2*radius) x (h + 2*radius).
+    // The output w and h are returned in outW and outH.
+    std::vector<uint8_t> DilateAlpha(const std::vector<uint8_t>& src, int w, int h, float radius, int& outW, int& outH);
+
 }
