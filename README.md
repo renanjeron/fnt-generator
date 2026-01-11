@@ -18,6 +18,7 @@ A cross-platform (Windows, macOS, Linux) tool for generating bitmap font atlases
   - Gradient Fills
   - Pattern Fill (JPG, PNG and Photoshop .PAT files)
 - **Real-Time Preview:** Visualize your atlas and text rendering instantly.
+- **Replace Glyphs:** Replace specific glyphs with custom images, you can even apply effects to them.
 - **Atlas Generation:** Generate bitmap font atlases with configurable padding and multi-page support.
 - **Export:** Generates industry-standard `.fnt` (XML, Binary, Text) and `.png` atlases compatible with popular game engines (AngelCode BMFont format).
 - **Style Persistence:** Save and load your favorite font styles.
@@ -109,7 +110,6 @@ This project relies on these amazing open-source libraries:
 - **[GLFW](https://www.glfw.org/)**: Open Source, multi-platform library for OpenGL, OpenGL ES, Vulkan, window and input.
 - **[nlohmann/json](https://github.com/nlohmann/json)**: JSON for Modern C++.
 - **[stb_image_write](https://github.com/nothings/stb)**: Single-file public domain image writer.
-
 
 ---
 
