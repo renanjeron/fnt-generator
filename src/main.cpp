@@ -1769,7 +1769,7 @@ int main(int, char**) {
                         if (ImGui::BeginPopup("GlyphContext")) {
                             if (g_SelectedGlyphIndex >= 0 && g_SelectedGlyphIndex < (int)g_LastAtlas.glyphs.size()) {
                                 const auto& g = g_LastAtlas.glyphs[g_SelectedGlyphIndex];
-                                ImGui::Text("Selected: U+%04X", g.charCode);
+                                ImGui::Text("Selected: U+%04X %c", g.charCode, (char)g.charCode);
                                 ImGui::Separator();
                                  if (ImGui::MenuItem("Remove from Atlas")) {
                                      std::vector<uint32_t> chars = Utils::DecodeUtf8(g_CustomGlyphsText.c_str());
